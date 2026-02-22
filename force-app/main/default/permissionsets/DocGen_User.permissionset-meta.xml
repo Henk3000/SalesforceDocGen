@@ -13,6 +13,14 @@
         <enabled>true</enabled>
     </classAccesses>
     <classAccesses>
+        <apexClass>DocGenRenditionQueueable</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>DocGenRenditionService</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
         <apexClass>DocGenController</apexClass>
         <enabled>true</enabled>
     </classAccesses>
@@ -132,6 +140,10 @@
     <label>DocGen User</label>
     <pageAccesses>
         <apexPage>DocGenPDFEngine</apexPage>
+        <enabled>true</enabled>
+    </pageAccesses>
+    <pageAccesses>
+        <apexPage>DocGenSessionProvider</apexPage>
         <enabled>true</enabled>
     </pageAccesses>
     <objectPermissions>

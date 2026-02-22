@@ -42,6 +42,16 @@ global with sharing class DocGenBatch implements Database.Batchable<SObject>, Da
                 System.debug('DocGen Batch Error for ' + rec.Id + ': ' + e.getMessage());
             }
         }
+        
+        // Update Job record incrementally for real-time progress tracking
+        update new DocGen_Job__c(
+            Id = jobId,
+            Success_Count__c = successCount,
+            Error_Count__c = failCount
+        );
+
+        // EXPERIMENT: Flush collected PDF rendition jobs (one per batch execute)
+        DocGenRenditionService.enqueueRenditions();
     }
     
     global void finish(Database.BatchableContext BC) {

@@ -27,7 +27,6 @@ export default class DocGenBulkRunner extends LightningElement {
     newQueryName = '';
     newQueryDesc = '';
     
-    pollInterval;
     
     // Wire Templates
     @wire(getBulkTemplates)
@@ -155,19 +154,15 @@ export default class DocGenBulkRunner extends LightningElement {
         this.isProcessing = true;
         try {
             this.jobId = await submitJob({ templateId: this.selectedTemplateId, condition: this.condition });
-            this.showToast('Success', 'Job Started', 'success');
-            this.startPolling();
+            this.showToast('Success', 'Job Started. Use the Refresh button to check progress.', 'success');
+            // Manual polling requested by user
+            await this.pollJob();
         } catch (error) {
             this.showToast('Error', error.body.message, 'error');
             this.isProcessing = false;
         }
     }
     
-    startPolling() {
-        this.pollInterval = setInterval(async () => {
-            await this.pollJob();
-        }, 2000);
-    }
     
     async pollJob() {
         if (!this.jobId) return;
@@ -194,9 +189,6 @@ export default class DocGenBulkRunner extends LightningElement {
         }
     }
     
-    disconnectedCallback() {
-        if (this.pollInterval) clearInterval(this.pollInterval);
-    }
 
     showToast(title, message, variant) {
         this.dispatchEvent(new ShowToastEvent({ title, message, variant }));

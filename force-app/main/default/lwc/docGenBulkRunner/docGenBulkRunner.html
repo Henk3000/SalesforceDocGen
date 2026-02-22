@@ -49,10 +49,31 @@
                                     <span class="slds-text-color_error">{jobProgress.error}</span>
                                 </div>
                             </div>
-                            <template if:true={isProcessing}>
+                             <template if:true={isProcessing}>
                                 <div class="slds-m-top_x-small">
                                     <lightning-progress-bar value={jobProgress.percent} variant="circular"></lightning-progress-bar>
-                                    <p class="slds-text-align_center slds-text-body_small slds-m-top_xx-small">Processing records...</p>
+                                    <div class="slds-grid slds-grid_align-spread slds-m-top_xx-small">
+                                        <p class="slds-text-body_small">Processing records...</p>
+                                        <lightning-button-icon 
+                                            icon-name="utility:refresh" 
+                                            variant="border-filled" 
+                                            size="small" 
+                                            onclick={pollJob} 
+                                            alternative-text="Refresh Status" 
+                                            title="Refresh Status">
+                                        </lightning-button-icon>
+                                    </div>
+                                </div>
+                            </template>
+                            <template if:false={isProcessing}>
+                                <div class="slds-m-top_x-small">
+                                    <lightning-button 
+                                        label="Refresh Final Status" 
+                                        icon-name="utility:refresh" 
+                                        variant="neutral" 
+                                        onclick={pollJob} 
+                                        class="slds-size_full">
+                                    </lightning-button>
                                 </div>
                             </template>
                         </div>

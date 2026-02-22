@@ -12,6 +12,8 @@
         <members>DocGenDataRetriever</members>
         <members>DocGenFlowAction</members>
         <members>DocGenService</members>
+        <members>DocGenRenditionQueueable</members>
+        <members>DocGenRenditionService</members>
         <members>DocGenSharingTests</members>
         <members>DocGenTemplateManager</members>
         <members>DocGenTests</members>
@@ -19,6 +21,7 @@
     </types>
     <types>
         <members>DocGenPDFEngine</members>
+        <members>DocGenSessionProvider</members>
         <name>ApexPage</name>
     </types>
     <types>
@@ -67,6 +70,10 @@
         <members>mammoth</members>
         <members>pizzip</members>
         <name>StaticResource</name>
+    </types>
+    <types>
+        <members>DocGen_Loopback</members>
+        <name>NamedCredential</name>
     </types>
     <version>65.0</version>
 </Package>

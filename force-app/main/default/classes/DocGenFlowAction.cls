@@ -33,6 +33,9 @@ global with sharing class DocGenFlowAction {
             responses.add(res);
         }
         
+        // EXPERIMENT: Flush collected PDF rendition jobs
+        DocGenRenditionService.enqueueRenditions();
+
         return responses;
     }
 }
