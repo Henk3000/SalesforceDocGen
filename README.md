@@ -23,6 +23,8 @@ sf package install --package 04tdL000000NnUfQAK --wait 10 --installation-key-byp
 
 ---
 
+What does this stuff do? Quick Overview Youtube: https://www.youtube.com/watch?v=TAdNItmu2jw
+
 ## 🧩 Core Components
 
 ### 1. Template Manager
