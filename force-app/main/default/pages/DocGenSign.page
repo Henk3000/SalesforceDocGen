@@ -112,45 +112,12 @@
                             // Component is created, hide the loading spinner
                             document.getElementById('loading').style.display = 'none';
 
-                            // Listen for the custom "signaturesave" event fired by the LWC
-                            document.getElementById('lwc-container').addEventListener('signaturesave', function(e) {
-                                // We received the Base64 image from the LWC!
-                                saveToSalesforce(e.detail.token, e.detail.base64Image);
-                            });
+                            // Note: In the new Experience Cloud Screen Flow architecture, 
+                            // the Flow handles the submission. This Visualforce page is 
+                            // now deprecated for active signing but remains as a fallback.
                         }
                     );
                 });
-            }
-
-            function saveToSalesforce(token, base64Image) {
-                // Return to loading state while merging XML
-                document.getElementById('lwc-container').style.display = 'none';
-                document.getElementById('loading').style.display = 'block';
-
-                Visualforce.remoting.Manager.invokeAction(
-                    '{!$RemoteAction.DocGenSignatureController.saveSignature}',
-                    token,
-                    base64Image,
-                    function(result, event) {
-                        document.getElementById('loading').style.display = 'none';
-
-                        if (event.status && result === 'Success') {
-                            // Inject success message directly to DOM
-                            let container = document.getElementById('lwc-container');
-                            container.style.display = 'block';
-                            container.innerHTML = `
-                                <div class="slds-box slds-theme_default slds-text-align_center slds-p-around_large">
-                                    <h2 class="slds-text-heading_large slds-text-color_success slds-m-bottom_small">✓ Signed Successfully</h2>
-                                    <p class="slds-text-body_regular">Thank you. The document has been securely sealed and a PDF is being generated.</p>
-                                    <p class="slds-text-body_small slds-m-top_medium slds-text-color_weak">You may now close this window.</p>
-                                </div>
-                            `;
-                        } else {
-                            showError(event.message || "An error occurred while merging the signature into the document.");
-                        }
-                    },
-                    {escape: false, buffer: false} // Don't buffer large Base64 strings
-                );
             }
         </script>
     </body>
