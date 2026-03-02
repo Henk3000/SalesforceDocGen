@@ -48,9 +48,7 @@ public with sharing class DocGenSignatureSenderController {
         req.Source_Document_Id__c = contentVersionId;
         req.Related_Record_Id__c = relatedRecordId;
         req.Status__c = 'Sent';
-        SObjectAccessDecision reqDecision = Security.stripInaccessible(AccessType.CREATABLE, new List<DocGen_Signature_Request__c>{ req });
-        insert reqDecision.getRecords();
-        req = (DocGen_Signature_Request__c) reqDecision.getRecords()[0];
+        insert req;
 
         // Create individual signer records
         String siteUrl = getSiteBaseUrl();
@@ -91,8 +89,7 @@ public with sharing class DocGenSignatureSenderController {
             results.add(sr);
         }
 
-        SObjectAccessDecision signerDecision = Security.stripInaccessible(AccessType.CREATABLE, signerRecords);
-        insert signerDecision.getRecords();
+        insert signerRecords;
         return results;
     }
 
@@ -117,8 +114,7 @@ public with sharing class DocGenSignatureSenderController {
         req.Related_Record_Id__c = relatedRecordId;
         req.Secure_Token__c = token;
         req.Status__c = 'Sent';
-        SObjectAccessDecision legacyDecision = Security.stripInaccessible(AccessType.CREATABLE, new List<DocGen_Signature_Request__c>{ req });
-        insert legacyDecision.getRecords();
+        insert req;
 
         return getSiteBaseUrl() + '/apex/DocGenSignature?token=' + token;
     }
@@ -171,9 +167,7 @@ public with sharing class DocGenSignatureSenderController {
     public static Id saveSignatureTemplate(String templateName, String rolesJson) {
         DocGen_Signature_Template__c tmpl = new DocGen_Signature_Template__c();
         tmpl.Name = templateName;
-        SObjectAccessDecision tmplDecision = Security.stripInaccessible(AccessType.CREATABLE, new List<DocGen_Signature_Template__c>{ tmpl });
-        insert tmplDecision.getRecords();
-        tmpl = (DocGen_Signature_Template__c) tmplDecision.getRecords()[0];
+        insert tmpl;
 
         List<Object> roleInputs = (List<Object>) JSON.deserializeUntyped(rolesJson);
         List<DocGen_Signature_Template_Role__c> roles = new List<DocGen_Signature_Template_Role__c>();
@@ -187,8 +181,7 @@ public with sharing class DocGenSignatureSenderController {
             roles.add(role);
         }
 
-        SObjectAccessDecision rolesDecision = Security.stripInaccessible(AccessType.CREATABLE, roles);
-        insert rolesDecision.getRecords();
+        insert roles;
         return tmpl.Id;
     }
 

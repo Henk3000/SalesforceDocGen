@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Salesforce-00A1E0.svg)](https://www.salesforce.com)
 
-Generate DOCX, PPTX, and PDF documents from any Salesforce record. Merge fields, loop over child records, inject images, collect legally-binding electronic signatures, and render PDFs -- all without leaving Salesforce, and without paying a dime.
+Generate DOCX, PPTX, and PDF documents from any Salesforce record. Merge fields, loop over child records, inject images from rich text fields, collect legally-binding electronic signatures, and render PDFs -- all without leaving Salesforce, and without paying a dime.
 
 ---
 
@@ -14,7 +14,7 @@ Generate DOCX, PPTX, and PDF documents from any Salesforce record. Merge fields,
 
 Document generation in Salesforce is expensive. The market leaders charge per-user, per-month fees that quickly add up across an organization. We believe basic document needs should be accessible to everyone.
 
-This project gives you a professional-grade document engine -- template management, bulk generation, flow integration, background PDF rendering, and multi-signer electronic signatures -- entirely for free and fully open-source.
+This project gives you a professional-grade document engine -- template management, bulk generation, flow integration, background PDF rendering, rich text with embedded images, and multi-signer electronic signatures -- entirely for free and fully open-source.
 
 ---
 
@@ -55,14 +55,16 @@ sf package version promote --package "Document Generation@0.5.0-3"
 
 This release represents a major evolution from the initial v0.1.0:
 
+- **100% Server-Side Document Generation** -- Replaced client-side docxtemplater/PizZip with a native Apex engine using Salesforce's Compression API. All merge tag processing, image injection, and loop expansion now happens server-side with zero browser dependencies.
 - **Multi-Signer Signature Roles** -- Define roles (Buyer, Seller, Witness, etc.) per template. Each signer receives a unique secure link and signs independently. Documents are stamped only after all parties complete.
 - **Visualforce Signature Portal** -- Replaced the Experience Cloud Flow approach with a standalone VF page. Simpler setup, better mobile experience, client-side document preview with live signature rendering.
-- **Rich Text & HTML Support** -- Template tags now preserve rich text formatting. Embedded `<img>` tags in rich text fields are automatically extracted and injected as images.
+- **Rich Text & HTML Support** -- Template tags now preserve rich text formatting. Embedded `<img>` tags in rich text fields are automatically extracted and injected as DrawingML images in the DOCX output.
 - **Image Size Controls** -- Use `{%ImageField:WxH}` syntax to specify exact pixel dimensions for injected images.
-- **PDF Rendering Fixes** -- Resolved blank PDF output issues, improved retry handling for Salesforce rendition API latency.
+- **Client-Side PDF Rendering** -- VF-based PDF engine uses docx-preview.js for high-fidelity DOCX rendering, then html2pdf.js for conversion. Cross-origin postMessage communication between LWC and VF iframe.
+- **Background PDF Rendition** -- Asynchronous PDF rendering via Named Credential loopback with built-in retry mechanism for Salesforce's rendition API latency.
 - **Previous Signature Request Recall** -- View and copy links from past signature requests directly from the record page.
 - **SLDS Mobile Accessibility** -- Updated all components to use density-aware utility classes and labeled buttons for mobile compatibility.
-- **Permission Set Hardening** -- Fixed deployment errors for required fields and guest user license configurations.
+- **2GP Package Ready** -- Full SYSTEM_MODE query support for package-internal objects, permission set-aware test harness, and security-reviewed stripInaccessible enforcement.
 
 ---
 
@@ -115,15 +117,21 @@ Two invocable actions for embedding document generation into any Salesforce Flow
 - Outputs: `jobId`, `errorMessage`
 - Ideal for Scheduled Flows -- generate monthly invoices, quarterly reports, etc.
 
-### Background PDF Engine
+### PDF Generation
 
-A self-contained, asynchronous PDF rendering engine that uses Salesforce's native REST API.
+Two rendering paths ensure PDF output works in every context:
 
-- **Zero external dependencies** -- no third-party services, no additional cost
-- **Secure loopback architecture** -- uses a Named Credential pointing back to your own org via OAuth
-- **Wizard-driven setup** -- the DocGen Setup tab walks you through Connected App, Auth Provider, and Named Credential creation in 4 steps
-- **Resilient** -- built-in retry mechanism handles `202 Accepted` latency from Salesforce's rendition API
-- **Platform Event driven** -- rendition requests are published as events, allowing system-context processing
+**Client-Side (Record Page):**
+- VF iframe receives the generated DOCX via postMessage
+- docx-preview.js renders the document with full formatting fidelity (headers, footers, images)
+- html2pdf.js converts the rendered HTML to PDF
+- PDF is saved back to Salesforce as a ContentVersion
+
+**Server-Side (Bulk & Flow):**
+- Named Credential loopback calls Salesforce's Connect REST API for PDF rendition
+- Built-in retry mechanism handles `202 Accepted` latency
+- Wizard-driven setup on the DocGen Setup tab walks you through Connected App, Auth Provider, and Named Credential creation in 4 steps
+- Platform Event or direct Queueable enqueue depending on the calling context
 
 ### Native Electronic Signatures
 
@@ -160,6 +168,8 @@ Tags inside table rows are automatically detected and expand into multiple rows 
 
 ### Document Generation Pipeline
 
+All document generation runs **100% server-side in Apex** -- no client-side JavaScript templating libraries are required for document creation.
+
 ```
 Template (.docx/.pptx)
     |
@@ -172,23 +182,22 @@ Pre-process XML
     |-- Normalize template tags across formatting boundaries
     |
     v
-Tag Processing
+Tag Processing (Server-side Apex)
     |-- Simple substitution: {Field} -> value
     |-- Loop expansion: {#List}...{/List} -> repeated content
     |-- Conditional rendering: {#Bool}...{/Bool}
-    |-- Image injection: {%Image} -> VML <w:pict> elements
-    |-- Rich text HTML -> extracted images + formatted text
+    |-- Image injection: {%Image} -> DrawingML <w:drawing> elements
+    |-- Rich text HTML -> extracted images + inline formatted text
     |
     v
 Recompress ZIP + Save as ContentVersion
     |
     v
-Queue PDF Rendition (Platform Event)
-    |
-    v
-REST API Callout via Named Credential
-    |-- GET /services/data/v63.0/connect/files/{id}/rendition?type=PDF
-    |-- Retry on 202 (up to 3 attempts)
+PDF Rendition (two paths):
+    |-- Server-side: Named Credential loopback via REST API
+    |   |-- GET /services/data/v63.0/connect/files/{id}/rendition?type=PDF
+    |   |-- Retry on 202 (up to 3 attempts)
+    |-- Client-side: VF page renders DOCX preview + html2pdf conversion
     |
     v
 Save PDF as ContentVersion (attached to record)
@@ -277,15 +286,15 @@ No Experience Cloud site, Flow embedding, or Screen Flow configuration is needed
 
 ```
 force-app/main/default/
-  classes/              30+ Apex classes (services, controllers, batch, tests)
+  classes/              26 Apex classes (services, controllers, batch, queueable, tests)
   lwc/                  12 Lightning Web Components
-  objects/              9 custom objects (templates, versions, jobs, signatures, signers)
+  objects/              9 custom objects + 1 platform event + 1 custom setting
   pages/                4 Visualforce pages (PDF engine, signature portal, verification)
   permissionsets/       3 permission sets (Admin, User, Guest Signature)
-  staticresources/      Libraries (docxtemplater, jszip, html2pdf, mammoth)
+  staticresources/      DocGenEngine bundle (docx-preview, jszip, html2pdf), mammoth, filesaver, sample templates
   triggers/             Platform event trigger for async PDF rendition
   applications/         DocGen Lightning App
-  tabs/                 6 custom tabs
+  tabs/                 8 custom tabs
 ```
 
 ---

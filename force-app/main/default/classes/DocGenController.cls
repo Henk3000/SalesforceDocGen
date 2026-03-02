@@ -140,15 +140,11 @@ public with sharing class DocGenController {
             template.Test_Record_Id__c = (String) fields.get('Test_Record_Id__c');
             template.Document_Title_Format__c = (String) fields.get('Document_Title_Format__c');
             
-            SObjectAccessDecision tplDecision = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Template__c>{ template });
-            update tplDecision.getRecords();
-
             // Update Output Format if provided
             if (fields.containsKey('Output_Format__c')) {
                 template.Output_Format__c = (String) fields.get('Output_Format__c');
-                SObjectAccessDecision fmtDecision = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Template__c>{ template });
-                update fmtDecision.getRecords();
             }
+            update template;
             
             // 2. Create Version if requested
             if (createVersion == true) {
@@ -161,8 +157,7 @@ public with sharing class DocGenController {
                 for (DocGen_Template_Version__c av : activeVersions) {
                     av.Is_Active__c = false;
                 }
-                SObjectAccessDecision avDecision = Security.stripInaccessible(AccessType.UPDATABLE, activeVersions);
-                update avDecision.getRecords();
+                update activeVersions;
 
                 // Get latest ContentVersionId
                 List<ContentDocumentLink> links = [
@@ -191,8 +186,7 @@ public with sharing class DocGenController {
                 version.Type__c = (String) fields.get('Type__c');
                 version.Base_Object_API__c = (String) fields.get('Base_Object_API__c');
                 
-                SObjectAccessDecision verDecision = Security.stripInaccessible(AccessType.CREATABLE, new List<DocGen_Template_Version__c>{ version });
-                insert verDecision.getRecords();
+                insert version;
             }
         } catch (Exception e) {
             throw new AuraHandledException('Error saving template: ' + e.getMessage());
@@ -241,13 +235,11 @@ public with sharing class DocGenController {
             for (DocGen_Template_Version__c v : others) {
                 v.Is_Active__c = false;
             }
-            SObjectAccessDecision othersDecision = Security.stripInaccessible(AccessType.UPDATABLE, others);
-            update othersDecision.getRecords();
+            update others;
 
             // 2. Activate this one
             version.Is_Active__c = true;
-            SObjectAccessDecision versionDecision = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Template_Version__c>{ version });
-            update versionDecision.getRecords();
+            update version;
 
             // 3. Update Template Record Headline
             DocGen_Template__c template = new DocGen_Template__c(Id = version.Template__c);
@@ -258,8 +250,7 @@ public with sharing class DocGenController {
             // Base Object usually constant but update it anyway
             template.Base_Object_API__c = version.Base_Object_API__c;
 
-            SObjectAccessDecision tplDecision2 = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Template__c>{ template });
-            update tplDecision2.getRecords();
+            update template;
             
         } catch (Exception e) {
             throw new DocGenException('Error activating version: ' + e.getMessage());
