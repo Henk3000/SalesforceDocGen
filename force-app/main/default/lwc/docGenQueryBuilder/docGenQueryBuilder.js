@@ -62,14 +62,23 @@ export default class DocGenQueryBuilder extends LightningElement {
     // --- Search & Select All ---
     handleSelectAll() {
         if (!this._fieldOptions) return;
-        // Check if all are currently selected to toggle? Or just Select All? User said "Select All".
-        // Let's assume Add All. 
-        // If we want Toggle, we check length.
-        // Let's do pure Select All for now.
-        this.baseFieldSelection = this._fieldOptions.map(opt => opt.value);
+        if (this._isAllSelected) {
+            this.baseFieldSelection = [];
+        } else {
+            this.baseFieldSelection = this._fieldOptions.map(opt => opt.value);
+        }
         this.updateCombinedSelection();
     }
-    
+
+    get _isAllSelected() {
+        return this._fieldOptions && this._fieldOptions.length > 0
+            && this.baseFieldSelection.length === this._fieldOptions.length;
+    }
+
+    get selectAllLabel() {
+        return this._isAllSelected ? 'Deselect All' : 'Select All';
+    }
+
     get isSelectAllDisabled() {
         return !this._fieldOptions || this._fieldOptions.length === 0;
     }
@@ -79,11 +88,8 @@ export default class DocGenQueryBuilder extends LightningElement {
         event.preventDefault();
         const tag = event.currentTarget.dataset.tag;
         if (tag) {
-             try {
-                // Use a temporary TextArea for broader compatibility if navigator.clipboard fails in some LWC contexts,
-                // but navigator.clipboard is standard now.
-                // Note: Secure contexts required.
-                await navigator.clipboard.writeText(tag);
+            try {
+                await this._copyToClipboard(tag);
                 this.dispatchEvent(
                     new ShowToastEvent({
                         title: 'Copied',
@@ -92,10 +98,35 @@ export default class DocGenQueryBuilder extends LightningElement {
                     })
                 );
             } catch (err) {
-                // Fallback or error
-                // Fallback to legacy execCommand if needed, but discouraged.
+                this.dispatchEvent(
+                    new ShowToastEvent({
+                        title: 'Copy Failed',
+                        message: 'Unable to copy to clipboard.',
+                        variant: 'error',
+                    })
+                );
             }
         }
+    }
+
+    _copyToClipboard(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+            return navigator.clipboard.writeText(text);
+        }
+        // Fallback for non-secure contexts (e.g. Lightning iframes)
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+            document.execCommand('copy');
+        } finally {
+            document.body.removeChild(textArea);
+        }
+        return Promise.resolve();
     }
 
     // --- Wiring ---
@@ -237,6 +268,8 @@ export default class DocGenQueryBuilder extends LightningElement {
 
     // Pending subqueries from parseConfig that couldn't be built yet (childOptions not loaded)
     _pendingSubqueries = null;
+    // Suppress notifyChange during parseConfig to avoid emitting incomplete queries
+    _isParsing = false;
 
     @wire(getChildRelationships, { objectName: '$selectedObject' })
     wiredChildren({ error, data }) {
@@ -273,7 +306,8 @@ export default class DocGenQueryBuilder extends LightningElement {
     
     parseConfig(queryStr) {
         if (!queryStr) return;
-        
+        this._isParsing = true;
+
         // 1. Extract Subqueries (Nested Parentheses Handling is tricky with Regex, assuming standard SOQL)
         // Match: (SELECT ... FROM ...)
         // We use a non-greedy match for the content to allow multiple subqueries
@@ -373,7 +407,10 @@ export default class DocGenQueryBuilder extends LightningElement {
             } else {
                 this._pendingSubqueries = null;
                 this.rebuildChildConfigs(subqueries);
+                // _isParsing cleared inside rebuildChildConfigs after async work
             }
+        } else {
+            this._isParsing = false;
         }
 
         // Force tags refresh
@@ -406,6 +443,7 @@ export default class DocGenQueryBuilder extends LightningElement {
             this.childConfigs = results.filter(r => r !== null);
             // Force reactivity refresh for tags
             this.selectedFields = [...this.selectedFields];
+            this._isParsing = false;
             this.notifyChange();
         });
     }
@@ -1067,11 +1105,12 @@ export default class DocGenQueryBuilder extends LightningElement {
 
 
     notifyChange() {
+        if (this._isParsing) return;
         const event = new CustomEvent('configchange', {
             detail: {
                 objectName: this.selectedObject,
                 queryConfig: this.generatedQuery,
-                titleFormat: this.titleFormat 
+                titleFormat: this.titleFormat
             }
         });
         this.dispatchEvent(event);

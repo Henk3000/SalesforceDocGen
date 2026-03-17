@@ -105,8 +105,10 @@ const VERSION_COLUMNS = [
     @track previewVersion = {};
     isLoadingVersions = false;
 
-    // Manual Query Toggle
+    // Manual Query Toggle (Edit modal)
     @track isManualQuery = false;
+    // Manual Query Toggle (Create wizard)
+    @track isNewManualQuery = false;
 
     // Filter State
     searchKey = '';
@@ -214,7 +216,19 @@ const VERSION_COLUMNS = [
         this.newTemplateObject = event.detail.objectName;
         this.newTemplateQuery = event.detail.queryConfig;
     }
-    
+
+    handleNewManualQueryToggle(event) {
+        this.isNewManualQuery = event.target.checked;
+    }
+
+    handleNewQueryStringChange(event) {
+        this.newTemplateQuery = event.target.value;
+    }
+
+    handleNewManualObjectChange(event) {
+        this.newTemplateObject = event.detail.value;
+    }
+
     // --- Edit Handlers ---
     handleEditNameChange(event) { this.editTemplateName = event.detail.value; }
     handleEditCategoryChange(event) { this.editTemplateCategory = event.detail.value; }
@@ -601,11 +615,14 @@ const VERSION_COLUMNS = [
                     return;
                 }
 
+                // Use '*' for targetOrigin because VF pages load on a different
+                // domain (*.vf.force.com) than the LWC host in Lightning with
+                // enhanced domains. The VF page validates the sender origin.
                 iframe.contentWindow.postMessage({
                     type: 'generate',
                     blob: bytes.buffer,
                     fileName: baseName
-                }, new URL('/apex/DocGenPDFEngine', window.location.origin).origin);
+                }, '*');
             }
 
         } catch (error) {
@@ -672,6 +689,7 @@ const VERSION_COLUMNS = [
         this.newTemplateObject = 'Account';
         this.createdTemplateId = null;
         this.isCreating = true;
+        this.isNewManualQuery = false;
         return refreshApex(this.wiredTemplatesResult);
     }
 

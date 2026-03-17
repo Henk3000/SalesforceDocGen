@@ -41,7 +41,7 @@ export default class DocGenBulkRunner extends LightningElement {
     wiredTemplates({ error, data }) {
         if (data) {
             this.templates = data.map(t => ({
-                label: t.Name + ' (' + t.Base_Object_API__c + ')',
+                label: t.Name + ' (' + t.Base_Object_API__c + ' \u2022 ' + (t.Output_Format__c || 'Document') + ')',
                 value: t.Id,
                 baseObject: t.Base_Object_API__c
             }));

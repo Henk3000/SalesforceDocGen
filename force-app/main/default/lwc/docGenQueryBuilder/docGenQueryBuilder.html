@@ -66,11 +66,11 @@
                                     </div>
                                     <div class="slds-col slds-size_1-of-2 slds-align-bottom">
                                         <div class="slds-float_right slds-grid slds-grid_vertical-align-center">
-                                            <lightning-input type="toggle" label="Show Selected Only" message-toggle-active="" message-toggle-inactive="" 
-                                                variant="label-hidden" class="slds-var-m-right_small" onchange={handleToggleSelectedOnly}>
+                                            <lightning-input type="toggle" label="Show Selected Only"
+                                                message-toggle-active="On" message-toggle-inactive="Off"
+                                                class="slds-var-m-right_small" onchange={handleToggleSelectedOnly}>
                                             </lightning-input>
-                                            <span class="slds-form-element__label slds-var-m-right_small" style="margin-bottom:0">Selected Only</span>
-                                            <lightning-button label="Select All" onclick={handleSelectAll} disabled={isSelectAllDisabled} size="small" variant="neutral"></lightning-button>
+                                            <lightning-button label={selectAllLabel} onclick={handleSelectAll} disabled={isSelectAllDisabled} size="small" variant="neutral"></lightning-button>
                                         </div>
                                     </div>
                                 </div>
