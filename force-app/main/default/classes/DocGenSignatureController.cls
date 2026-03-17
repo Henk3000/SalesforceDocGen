@@ -245,24 +245,12 @@ public without sharing class DocGenSignatureController {
      */
     private static String getDocumentHtml(Blob docxBlob) {
         try {
-            Compression.ZipReader reader = new Compression.ZipReader(docxBlob);
-            String documentXml = null;
-            Map<String, String> images = new Map<String, String>();
-
-            for (Compression.ZipEntry entry : reader.getEntries()) {
-                String name = entry.getName();
-                if (name == 'word/document.xml') {
-                    documentXml = reader.extract(name).toString();
-                } else if (name.startsWith('word/media/')) {
-                    // Extract images and create relationship ID mapping
-                    String fileName = name.substringAfter('word/media/');
-                    Blob imgBlob = reader.extract(name);
-                    images.put(fileName, EncodingUtil.base64Encode(imgBlob));
-                }
-            }
+            Map<String, Object> extracted = extractDocxParts(docxBlob);
+            String documentXml = (String) extracted.get('documentXml');
+            Map<String, String> imagesByRelId = (Map<String, String>) extracted.get('imagesByRelId');
 
             if (documentXml != null) {
-                return DocGenHtmlRenderer.convertToHtml(documentXml, images);
+                return DocGenHtmlRenderer.convertToHtml(documentXml, imagesByRelId);
             }
         } catch (Exception e) {
             System.debug(LoggingLevel.ERROR, 'DocGen: Error converting DOCX to HTML for signature display: ' + e.getMessage());
@@ -515,22 +503,79 @@ public without sharing class DocGenSignatureController {
      * Converts a stamped DOCX blob to PDF using DocGenHtmlRenderer + Blob.toPdf().
      */
     private static Blob convertStampedDocxToPdf(Blob docxBlob) {
+        Map<String, Object> extracted = extractDocxParts(docxBlob);
+        String documentXml = (String) extracted.get('documentXml');
+        Map<String, String> imagesByRelId = (Map<String, String>) extracted.get('imagesByRelId');
+        String html = DocGenHtmlRenderer.convertToHtml(documentXml, imagesByRelId);
+        return Blob.toPdf(html);
+    }
+
+    /**
+     * Extracts document.xml, rels, and images from a DOCX blob.
+     * Returns a map keyed by relationship ID → base64 image data (as the renderer expects).
+     */
+    private static Map<String, Object> extractDocxParts(Blob docxBlob) {
         Compression.ZipReader reader = new Compression.ZipReader(docxBlob);
         String documentXml = null;
-        Map<String, String> images = new Map<String, String>();
+        String relsXml = null;
+        Map<String, String> imagesByFileName = new Map<String, String>();
 
         for (Compression.ZipEntry entry : reader.getEntries()) {
             String name = entry.getName();
             if (name == 'word/document.xml') {
                 documentXml = reader.extract(name).toString();
+            } else if (name == 'word/_rels/document.xml.rels') {
+                relsXml = reader.extract(name).toString();
             } else if (name.startsWith('word/media/')) {
                 String fileName = name.substringAfter('word/media/');
-                images.put(fileName, EncodingUtil.base64Encode(reader.extract(name)));
+                imagesByFileName.put(fileName, EncodingUtil.base64Encode(reader.extract(name)));
             }
         }
 
-        String html = DocGenHtmlRenderer.convertToHtml(documentXml, images);
-        return Blob.toPdf(html);
+        // Build relId → base64 map by parsing the .rels XML
+        Map<String, String> imagesByRelId = new Map<String, String>();
+        if (relsXml != null) {
+            // Parse <Relationship Id="rId..." Target="media/filename.png"/> entries
+            Integer cursor = 0;
+            while (cursor < relsXml.length()) {
+                Integer relStart = relsXml.indexOf('<Relationship ', cursor);
+                if (relStart == -1) break;
+                Integer relEnd = relsXml.indexOf('/>', relStart);
+                if (relEnd == -1) break;
+                relEnd += 2;
+
+                String relTag = relsXml.substring(relStart, relEnd);
+                String relId = extractXmlAttr(relTag, 'Id');
+                String target = extractXmlAttr(relTag, 'Target');
+
+                if (relId != null && target != null && target.startsWith('media/')) {
+                    String mediaFileName = target.substringAfter('media/');
+                    String base64 = imagesByFileName.get(mediaFileName);
+                    if (base64 != null) {
+                        imagesByRelId.put(relId, base64);
+                    }
+                }
+                cursor = relEnd;
+            }
+        }
+
+        return new Map<String, Object>{
+            'documentXml' => documentXml,
+            'imagesByRelId' => imagesByRelId
+        };
+    }
+
+    /**
+     * Extracts an attribute value from an XML tag string.
+     */
+    private static String extractXmlAttr(String tag, String attrName) {
+        String search = attrName + '="';
+        Integer start = tag.indexOf(search);
+        if (start == -1) return null;
+        start += search.length();
+        Integer end2 = tag.indexOf('"', start);
+        if (end2 == -1) return null;
+        return tag.substring(start, end2);
     }
 
     /**
