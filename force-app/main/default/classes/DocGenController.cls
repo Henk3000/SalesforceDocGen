@@ -151,52 +151,50 @@ public with sharing class DocGenController {
             if (fields.containsKey('Is_Default__c')) {
                 template.Is_Default__c = (Boolean) fields.get('Is_Default__c');
             }
-            SObjectAccessDecision tplDecision = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Template__c>{ template });
-            update tplDecision.getRecords();
+            // Package-internal object — CRUD controlled by DocGen permission sets
+            update template;
 
             // 2. Create Version if requested
             if (createVersion == true) {
                 // Deactivate current active versions
                 List<DocGen_Template_Version__c> activeVersions = [
-                    SELECT Id FROM DocGen_Template_Version__c 
+                    SELECT Id FROM DocGen_Template_Version__c
                     WHERE Template__c = :templateId AND Is_Active__c = true
                     WITH SYSTEM_MODE
                 ];
                 for (DocGen_Template_Version__c av : activeVersions) {
                     av.Is_Active__c = false;
                 }
-                SObjectAccessDecision avDecision = Security.stripInaccessible(AccessType.UPDATABLE, activeVersions);
-                update avDecision.getRecords();
+                update activeVersions;
 
                 // Get latest ContentVersionId
                 List<ContentDocumentLink> links = [
-                    SELECT ContentDocument.LatestPublishedVersionId 
-                    FROM ContentDocumentLink 
-                    WHERE LinkedEntityId = :templateId 
+                    SELECT ContentDocument.LatestPublishedVersionId
+                    FROM ContentDocumentLink
+                    WHERE LinkedEntityId = :templateId
                     WITH USER_MODE
-                    ORDER BY ContentDocument.CreatedDate DESC 
+                    ORDER BY ContentDocument.CreatedDate DESC
                     LIMIT 1
                 ];
-                
+
                 String cvId = null;
                 if (!links.isEmpty()) {
                     cvId = links[0].ContentDocument.LatestPublishedVersionId;
                 }
-                
+
                 DocGen_Template_Version__c version = new DocGen_Template_Version__c();
                 version.Template__c = templateId;
                 version.Query_Config__c = (String) fields.get('Query_Config__c');
-                version.Content_Version_Id__c = cvId; 
+                version.Content_Version_Id__c = cvId;
                 version.Is_Active__c = true;
-                
+
                 // Snapshot Headers
                 version.Category__c = (String) fields.get('Category__c');
                 version.Description__c = (String) fields.get('Description__c');
                 version.Type__c = (String) fields.get('Type__c');
                 version.Base_Object_API__c = (String) fields.get('Base_Object_API__c');
-                
-                SObjectAccessDecision verDecision = Security.stripInaccessible(AccessType.CREATABLE, new List<DocGen_Template_Version__c>{ version });
-                insert verDecision.getRecords();
+
+                insert version;
             }
         } catch (Exception e) {
             System.debug(LoggingLevel.ERROR, 'DocGen: Error saving template: ' + e.getMessage());
@@ -247,13 +245,12 @@ public with sharing class DocGenController {
             for (DocGen_Template_Version__c v : others) {
                 v.Is_Active__c = false;
             }
-            SObjectAccessDecision othersDecision = Security.stripInaccessible(AccessType.UPDATABLE, others);
-            update othersDecision.getRecords();
+            // Package-internal objects — CRUD controlled by DocGen permission sets
+            update others;
 
             // 2. Activate this one
             version.Is_Active__c = true;
-            SObjectAccessDecision verDecision = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Template_Version__c>{ version });
-            update verDecision.getRecords();
+            update version;
 
             // 3. Update Template Record Headline
             DocGen_Template__c template = new DocGen_Template__c(Id = version.Template__c);
@@ -263,8 +260,7 @@ public with sharing class DocGenController {
             template.Type__c = version.Type__c;
             template.Base_Object_API__c = version.Base_Object_API__c;
 
-            SObjectAccessDecision tplDecision = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Template__c>{ template });
-            update tplDecision.getRecords();
+            update template;
             
         } catch (Exception e) {
             throw new DocGenException('Error activating version: ' + e.getMessage());

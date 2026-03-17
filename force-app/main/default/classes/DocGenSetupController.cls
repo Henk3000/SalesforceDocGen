@@ -19,8 +19,7 @@ public with sharing class DocGenSetupController {
         }
         DocGen_Settings__c settings = DocGen_Settings__c.getOrgDefaults();
         settings.Experience_Site_Url__c = experienceSiteUrl;
-        SObjectAccessDecision sd = Security.stripInaccessible(AccessType.UPSERTABLE, new List<DocGen_Settings__c>{ settings });
-        upsert sd.getRecords();
+        upsert settings;
     }
 
     @AuraEnabled
@@ -35,8 +34,7 @@ public with sharing class DocGenSetupController {
         settings.Signature_Email_Brand_Color__c = brandColor;
         settings.Signature_Email_Subject__c = emailSubject;
         settings.Signature_Email_Footer_Text__c = footerText;
-        SObjectAccessDecision sd = Security.stripInaccessible(AccessType.UPSERTABLE, new List<DocGen_Settings__c>{ settings });
-        upsert sd.getRecords();
+        upsert settings;
     }
 
     @AuraEnabled

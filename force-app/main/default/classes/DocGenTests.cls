@@ -3,13 +3,6 @@ private class DocGenTests {
 
     @testSetup
     static void setup() {
-        // Assign DocGen Admin permission set for FLS access
-        PermissionSet ps = [SELECT Id FROM PermissionSet WHERE Name = 'DocGen_Admin' LIMIT 1];
-        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
-        System.runAs(u) {
-            insert new PermissionSetAssignment(AssigneeId = u.Id, PermissionSetId = ps.Id);
-        }
-
         // Create Template
         DocGen_Template__c tpl = new DocGen_Template__c(
             Name = 'Test Template',

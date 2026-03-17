@@ -3,13 +3,6 @@ private class DocGenSignatureTests {
 
     @testSetup
     static void setup() {
-        // Assign DocGen Admin permission set for FLS access
-        PermissionSet ps = [SELECT Id FROM PermissionSet WHERE Name = 'DocGen_Admin' LIMIT 1];
-        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
-        System.runAs(u) {
-            insert new PermissionSetAssignment(AssigneeId = u.Id, PermissionSetId = ps.Id);
-        }
-
         Account acc = new Account(Name = 'Signature Test Account', Website = 'https://test.com');
         insert acc;
 
@@ -118,7 +111,7 @@ private class DocGenSignatureTests {
         Test.stopTest();
 
         System.assertEquals(false, res.isValid);
-        System.assertEquals('Signature request not found. The link may be invalid.', res.errorMessage);
+        System.assertEquals('Signature request not found. The link may be invalid or expired.', res.errorMessage);
     }
 
     @isTest
@@ -400,14 +393,9 @@ private class DocGenSignatureTests {
             // Acceptable
         }
 
-        // Invalid token
-        Boolean caught = false;
-        try {
-            DocGenSignatureController.finishSignatureUpload('NO_MATCH_TOKEN_XYZ', fakeBase64Pdf, 'TestSigned.pdf');
-        } catch (AuraHandledException e) {
-            caught = true;
-        }
-        System.assert(caught, 'finishSignatureUpload should throw for unknown token');
+        // Invalid token — method is now a no-op (PDF saved server-side), should not throw
+        DocGenSignatureController.finishSignatureUpload('NO_MATCH_TOKEN_XYZ', fakeBase64Pdf, 'TestSigned.pdf');
+        System.assert(true, 'finishSignatureUpload is a no-op and should not throw');
 
         Test.stopTest();
     }

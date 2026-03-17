@@ -19,8 +19,7 @@ public with sharing class DocGenBatch implements Database.Batchable<SObject>, Da
     public Database.QueryLocator start(Database.BatchableContext BC) {
         // Update Status to Processing
         DocGen_Job__c jobStatus = new DocGen_Job__c(Id = jobId, Status__c = 'Processing');
-        SObjectAccessDecision jd = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Job__c>{ jobStatus });
-        update jd.getRecords();
+        update jobStatus;
 
         // Validate object name against Schema to prevent injection
         if (Schema.getGlobalDescribe().get(baseObject) == null) {
@@ -42,8 +41,7 @@ public with sharing class DocGenBatch implements Database.Batchable<SObject>, Da
         countQuery += ' WITH USER_MODE';
         Integer total = Database.countQuery(countQuery);
         DocGen_Job__c jobTotal = new DocGen_Job__c(Id = jobId, Status__c = 'Processing', Total_Records__c = total);
-        SObjectAccessDecision jtd = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Job__c>{ jobTotal });
-        update jtd.getRecords();
+        update jobTotal;
 
         return Database.getQueryLocator(query);
     }
@@ -88,8 +86,7 @@ public with sharing class DocGenBatch implements Database.Batchable<SObject>, Da
             Success_Count__c = successCount,
             Error_Count__c = failCount
         );
-        SObjectAccessDecision jpd = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Job__c>{ jobProgress });
-        update jpd.getRecords();
+        update jobProgress;
     }
 
     public void finish(Database.BatchableContext BC) {
@@ -108,7 +105,6 @@ public with sharing class DocGenBatch implements Database.Batchable<SObject>, Da
             Success_Count__c = successCount,
             Error_Count__c = failCount
         );
-        SObjectAccessDecision jfd = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Job__c>{ jobToUpdate });
-        update jfd.getRecords();
+        update jobToUpdate;
     }
 }
