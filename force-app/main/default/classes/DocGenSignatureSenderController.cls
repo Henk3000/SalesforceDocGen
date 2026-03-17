@@ -17,7 +17,7 @@ public with sharing class DocGenSignatureSenderController {
             SELECT Id, Title, FileExtension, ContentDocumentId
             FROM ContentVersion
             WHERE ContentDocumentId IN :docIds AND IsLatest = true
-            AND FileExtension IN ('docx', 'pdf')
+            AND FileExtension = 'docx'
             WITH USER_MODE
             ORDER BY CreatedDate DESC
         ];
@@ -289,6 +289,56 @@ public with sharing class DocGenSignatureSenderController {
         }
 
         return results;
+    }
+
+    /**
+     * Scans a DOCX for {#Signature_XXX} placeholders and returns the role names.
+     * Used by the LWC to auto-populate signer rows when a document is selected.
+     */
+    @AuraEnabled
+    public static List<String> getDocumentSignatureRoles(Id contentDocumentId) {
+        List<ContentDocument> docs = [SELECT LatestPublishedVersionId FROM ContentDocument WHERE Id = :contentDocumentId WITH SYSTEM_MODE LIMIT 1];
+        if (docs.isEmpty()) return new List<String>();
+
+        ContentVersion cv = [SELECT VersionData FROM ContentVersion WHERE Id = :docs[0].LatestPublishedVersionId WITH SYSTEM_MODE LIMIT 1];
+        if (cv == null || cv.VersionData == null) return new List<String>();
+
+        // Extract document.xml from the DOCX ZIP
+        Compression.ZipReader reader = new Compression.ZipReader(cv.VersionData);
+        String documentXml = null;
+        for (Compression.ZipEntry entry : reader.getEntries()) {
+            if (entry.getName() == 'word/document.xml') {
+                documentXml = reader.extract(entry.getName()).toString();
+                break;
+            }
+        }
+        if (documentXml == null) return new List<String>();
+
+        // Extract all text from <w:t> elements (handles tags split across runs)
+        String plainText = '';
+        Pattern wtPat = Pattern.compile('<w:t[^>]*>([^<]*)</w:t>');
+        Matcher wtMatch = wtPat.matcher(documentXml);
+        while (wtMatch.find()) {
+            plainText += wtMatch.group(1);
+        }
+
+        // Find {#Signature_RoleName} placeholders
+        List<String> roles = new List<String>();
+        Pattern sigPat = Pattern.compile('\\{#Signature_([^}]+)\\}');
+        Matcher sigMatch = sigPat.matcher(plainText);
+        while (sigMatch.find()) {
+            String roleName = sigMatch.group(1).replaceAll('_', ' ');
+            if (!roles.contains(roleName)) {
+                roles.add(roleName);
+            }
+        }
+
+        // Check for generic {#Signature} (single signer, no named role)
+        if (roles.isEmpty() && plainText.contains('{#Signature}')) {
+            roles.add('Signer');
+        }
+
+        return roles;
     }
 
     private static String getDocumentTitle(Id contentVersionId) {

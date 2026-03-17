@@ -8,6 +8,7 @@ import createMultiSignerRequest from '@salesforce/apex/DocGenSignatureSenderCont
 import saveSignatureTemplate from '@salesforce/apex/DocGenSignatureSenderController.saveSignatureTemplate';
 import getContactInfo from '@salesforce/apex/DocGenSignatureSenderController.getContactInfo';
 import getPendingSignatureRequests from '@salesforce/apex/DocGenSignatureSenderController.getPendingSignatureRequests';
+import getDocumentSignatureRoles from '@salesforce/apex/DocGenSignatureSenderController.getDocumentSignatureRoles';
 
 let signerIdCounter = 0;
 
@@ -87,7 +88,14 @@ export default class DocGenSignatureSender extends LightningElement {
         this._wireCallsReturned++;
         if (this._wireCallsReturned >= 3) {
             this.isLoading = false;
-            if (this.signers.length === 0) {
+            if (this.selectedDocId) {
+                // Scan selected document for signature role placeholders
+                this._scanDocumentForRoles().then(() => {
+                    if (this.signers.length === 0) {
+                        this.handleAddSigner();
+                    }
+                });
+            } else if (this.signers.length === 0) {
                 this.handleAddSigner();
             }
         }
@@ -122,8 +130,28 @@ export default class DocGenSignatureSender extends LightningElement {
 
     // --- Document Handlers ---
 
-    handleDocChange(event) {
+    async handleDocChange(event) {
         this.selectedDocId = event.detail.value;
+        this.signerResults = undefined;
+        await this._scanDocumentForRoles();
+    }
+
+    async _scanDocumentForRoles() {
+        if (!this.selectedDocId) return;
+        try {
+            const roles = await getDocumentSignatureRoles({ contentDocumentId: this.selectedDocId });
+            if (roles && roles.length > 0) {
+                this.signers = roles.map(roleName => ({
+                    id: ++signerIdCounter,
+                    roleName: roleName,
+                    contactId: '',
+                    signerName: '',
+                    signerEmail: ''
+                }));
+            }
+        } catch (err) {
+            // Silently fail — user can still add signers manually
+        }
     }
 
     // --- Template Handlers ---

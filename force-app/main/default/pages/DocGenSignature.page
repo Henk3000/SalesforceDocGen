@@ -564,7 +564,14 @@
             ctx.fillText('Signed: ' + timestamp, canvas.width - 10, canvas.height - 10);
             ctx.restore();
 
-            var dataUrl = canvas.toDataURL('image/png');
+            // Fill white background behind signature for PDF compatibility
+            ctx.save();
+            ctx.globalCompositeOperation = 'destination-over';
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.restore();
+
+            var dataUrl = canvas.toDataURL('image/jpeg', 0.95);
             var base64Image = dataUrl.split(',')[1];
 
             if (isMultiSigner) {
@@ -595,9 +602,22 @@
                     { escape: false, buffer: false, timeout: 120000 }
                 );
             } else {
-                // Legacy single-signer: stamp and generate PDF server-side
-                updateStatus('Stamping signature and generating PDF...');
-                callStampAndSave(base64Image);
+                // Legacy single-signer: save image first (separate transaction), then generate PDF
+                updateStatus('Saving signature...');
+                Visualforce.remoting.Manager.invokeAction(
+                    '{!$RemoteAction.DocGenSignatureController.saveLegacySignature}',
+                    token,
+                    base64Image,
+                    function(saveResult, saveEvent) {
+                        if (!saveEvent.status) {
+                            showError('Save failed: ' + (saveEvent.message || 'Unknown error'));
+                            return;
+                        }
+                        updateStatus('Generating signed PDF...');
+                        callStampAndSave(base64Image);
+                    },
+                    { escape: false, buffer: false, timeout: 120000 }
+                );
             }
         }
 

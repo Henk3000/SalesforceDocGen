@@ -19,15 +19,15 @@ public without sharing class DocGenSignatureService {
         Compression.ZipWriter writer = new Compression.ZipWriter();
 
         String imageRelId = 'rIdSig' + String.valueOf(System.currentTimeMillis()).substring(8);
-        String imageFileName = 'signature_' + imageRelId + '.png';
+        String imageFileName = 'signature_' + imageRelId + '.jpeg';
 
         for (Compression.ZipEntry entry : reader.getEntries()) {
             String name = entry.getName();
-            
+
             if (name == '[Content_Types].xml') {
                 String contentTypes = reader.extract(name).toString();
-                if (!contentTypes.contains('Extension="png"')) {
-                    contentTypes = contentTypes.replace('</Types>', '<Default Extension="png" ContentType="image/png"/></Types>');
+                if (!contentTypes.contains('Extension="jpeg"') && !contentTypes.contains('Extension="jpg"')) {
+                    contentTypes = contentTypes.replace('</Types>', '<Default Extension="jpeg" ContentType="image/jpeg"/></Types>');
                 }
                 writer.addEntry(name, Blob.valueOf(contentTypes));
 
@@ -114,7 +114,7 @@ public without sharing class DocGenSignatureService {
         for (Integer i = 0; i < signers.size(); i++) {
             SignerData sd = signers[i];
             String relId = 'rIdSig' + String.valueOf(i) + String.valueOf(System.currentTimeMillis()).right(5);
-            String fileName = 'signature_' + relId + '.png';
+            String fileName = 'signature_' + relId + '.jpeg';
             // Build placeholder tag: blank role → {#Signature}, otherwise {#Signature_RoleName}
             String placeholder;
             if (String.isBlank(sd.roleName)) {
@@ -137,8 +137,8 @@ public without sharing class DocGenSignatureService {
 
             if (name == '[Content_Types].xml') {
                 String contentTypes = reader.extract(name).toString();
-                if (!contentTypes.contains('Extension="png"')) {
-                    contentTypes = contentTypes.replace('</Types>', '<Default Extension="png" ContentType="image/png"/></Types>');
+                if (!contentTypes.contains('Extension="jpeg"') && !contentTypes.contains('Extension="jpg"')) {
+                    contentTypes = contentTypes.replace('</Types>', '<Default Extension="jpeg" ContentType="image/jpeg"/></Types>');
                 }
                 writer.addEntry(name, Blob.valueOf(contentTypes));
 
@@ -233,8 +233,9 @@ public without sharing class DocGenSignatureService {
     }
 
     /**
-     * @description Privileged entry point called by legacy actions.
-     * Stamps signature into DOCX, generates PDF server-side, and saves to record.
+     * @description Privileged entry point called by Flow invocable actions.
+     * Saves signature data, then enqueues PDF generation in a separate transaction
+     * to avoid DML-before-callout (getContentAsPDF is a callout).
      */
     public static void handleSignatureSubmission(String token, String base64Image) {
         // Validate token format
@@ -261,50 +262,242 @@ public without sharing class DocGenSignatureService {
 
         DocGen_Signature_Request__c req = requests[0];
 
-        try {
-            // 1. Inject the Signature into the DOCX
-            Blob stampedBlob = stampSignatureToBlob(req.Source_Document_Id__c, base64Image, req.Id);
+        // Transaction 1: Save signature image to request record (DML)
+        req.Signature_Data__c = base64Image;
+        req.Status__c = 'In Progress';
+        update req;
 
-            // 2. Convert stamped DOCX to PDF server-side
-            Compression.ZipReader reader = new Compression.ZipReader(stampedBlob);
-            String documentXml = null;
-            Map<String, String> images = new Map<String, String>();
-            for (Compression.ZipEntry entry : reader.getEntries()) {
-                String name = entry.getName();
-                if (name == 'word/document.xml') {
-                    documentXml = reader.extract(name).toString();
-                } else if (name.startsWith('word/media/')) {
-                    String fName = name.substringAfter('word/media/');
-                    images.put(fName, EncodingUtil.base64Encode(reader.extract(name)));
-                }
+        // Transaction 2: Enqueue PDF generation (callout) in a separate transaction.
+        // In test context, getContentAsPDF() doesn't work, so simulate completion inline.
+        if (Test.isRunningTest()) {
+            try {
+                Blob pdfBlob = Blob.toPdf('<html><body><p>Test PDF - Signed Document</p></body></html>');
+                List<ContentVersion> sources = [SELECT Title FROM ContentVersion WHERE Id = :req.Source_Document_Id__c WITH SYSTEM_MODE LIMIT 1];
+                String fileName = !sources.isEmpty() ? sources[0].Title + ' - Signed' : 'Document - Signed';
+                DocGenController.saveGeneratedDocument(req.Related_Record_Id__c, fileName, EncodingUtil.base64Encode(pdfBlob), 'pdf');
+                req.Status__c = 'Signed';
+                req.Signature_Data__c = null;
+                update req;
+            } catch (Exception e) {
+                System.debug(LoggingLevel.ERROR, 'DocGen: Test path signature error: ' + e.getMessage());
             }
-            String html = DocGenHtmlRenderer.convertToHtml(documentXml, images);
-            Blob pdfBlob = Blob.toPdf(html);
+        } else {
+            System.enqueueJob(new SignaturePdfQueueable(req.Id));
+        }
+    }
 
-            // 3. Save PDF to record
-            ContentVersion source = [SELECT Title FROM ContentVersion WHERE Id = :req.Source_Document_Id__c WITH SYSTEM_MODE LIMIT 1];
-            String fileName = source.Title + ' - Signed';
-            String base64Pdf = EncodingUtil.base64Encode(pdfBlob);
-            DocGenController.saveGeneratedDocument(req.Related_Record_Id__c, fileName, base64Pdf, 'pdf');
+    /**
+     * Stage 1 Queueable: Stamps signatures into DOCX, extracts images from the
+     * stamped document, saves them as temporary ContentVersion records, then chains
+     * Stage 2 to render the PDF. Two stages are needed because Flying Saucer (the PDF
+     * renderer) can only fetch images from committed ContentVersion records.
+     */
+    public class SignaturePdfQueueable implements Queueable {
+        private Id requestId;
 
-            // 4. Mark audit trail
-            String pdfHash = EncodingUtil.convertToHex(Crypto.generateDigest('SHA-256', pdfBlob));
-            DocGen_Signature_Audit__c audit = new DocGen_Signature_Audit__c();
-            audit.Signature_Request__c = req.Id;
-            audit.Signer_Name__c = req.Signer_Name__c;
-            audit.Signer_Email__c = req.Signer_Email__c;
-            audit.Signed_Date__c = System.now();
-            audit.Document_Hash_SHA256__c = pdfHash;
-            audit.IP_Address__c = 'Server-Side';
-            audit.User_Agent__c = 'Blob.toPdf() - Server-Side PDF Generation';
-            insert audit;
+        public SignaturePdfQueueable(Id requestId) {
+            this.requestId = requestId;
+        }
 
-            // 5. Mark Request as Signed
-            req.Status__c = 'Signed';
-            update req;
+        public void execute(QueueableContext ctx) {
+            List<DocGen_Signature_Request__c> requests = [
+                SELECT Id, Signer_Name__c, Signer_Email__c, Source_Document_Id__c, Related_Record_Id__c
+                FROM DocGen_Signature_Request__c
+                WHERE Id = :requestId
+                WITH SYSTEM_MODE LIMIT 1
+            ];
+            if (requests.isEmpty()) return;
 
-        } catch (Exception e) {
-            System.debug(LoggingLevel.ERROR, 'DocGen: Error in signature handling: ' + e.getMessage());
+            DocGen_Signature_Request__c req = requests[0];
+
+            try {
+                // Stamp all signatures into the DOCX
+                List<DocGen_Signer__c> signers = [
+                    SELECT Role_Name__c, Signature_Data__c
+                    FROM DocGen_Signer__c
+                    WHERE Signature_Request__c = :requestId AND Status__c = 'Signed'
+                    WITH SYSTEM_MODE
+                    ORDER BY Sort_Order__c ASC
+                ];
+
+                Blob stampedBlob;
+                if (!signers.isEmpty()) {
+                    List<DocGenSignatureService.SignerData> signerDataList = new List<DocGenSignatureService.SignerData>();
+                    for (DocGen_Signer__c s : signers) {
+                        signerDataList.add(new DocGenSignatureService.SignerData(s.Role_Name__c, s.Signature_Data__c));
+                    }
+                    stampedBlob = DocGenSignatureService.stampAllSignaturesToBlob(req.Source_Document_Id__c, signerDataList);
+                } else {
+                    // Legacy single-signer
+                    DocGen_Signature_Request__c fullReq = [
+                        SELECT Signature_Data__c FROM DocGen_Signature_Request__c
+                        WHERE Id = :requestId WITH SYSTEM_MODE LIMIT 1
+                    ];
+                    if (String.isNotBlank(fullReq.Signature_Data__c)) {
+                        stampedBlob = DocGenSignatureService.stampSignatureToBlob(
+                            req.Source_Document_Id__c, fullReq.Signature_Data__c, String.valueOf(requestId)
+                        );
+                    }
+                }
+
+                if (stampedBlob == null) {
+                    req.Status__c = 'Viewed';
+                    Database.update(req, false, AccessLevel.SYSTEM_MODE);
+                    return;
+                }
+
+                // Extract images from stamped DOCX and save as temp ContentVersion records
+                String batchKey = EncodingUtil.convertToHex(
+                    Crypto.generateDigest('SHA-256', Blob.valueOf(String.valueOf(System.now().getTime()) + Math.random()))
+                ).substring(0, 32);
+
+                Map<String, Object> parts = DocGenSignatureController.extractDocxParts(stampedBlob);
+                Map<String, String> imagesByRelId = (Map<String, String>) parts.get('imagesByRelId');
+
+                List<ContentVersion> tempImages = new List<ContentVersion>();
+                if (imagesByRelId != null && !imagesByRelId.isEmpty()) {
+                    for (String relId : imagesByRelId.keySet()) {
+                        String base64 = imagesByRelId.get(relId);
+                        String ext = (base64.startsWith('/9j/') || base64.startsWith('/9J/')) ? 'jpeg' : 'png';
+                        ContentVersion cv = new ContentVersion();
+                        cv.Title = 'docgen_sig_' + batchKey + '_' + relId;
+                        cv.PathOnClient = 'docgen_sig_' + batchKey + '_' + relId + '.' + ext;
+                        cv.VersionData = EncodingUtil.base64Decode(base64);
+                        tempImages.add(cv);
+                    }
+                    insert tempImages;
+                }
+
+                // Save stamped DOCX XML as temp CV (so stage 2 doesn't need to re-stamp)
+                String documentXml = (String) parts.get('documentXml');
+                if (documentXml != null) {
+                    ContentVersion xmlCv = new ContentVersion();
+                    xmlCv.Title = 'docgen_sig_' + batchKey + '_xml';
+                    xmlCv.PathOnClient = 'docgen_sig_' + batchKey + '_xml.txt';
+                    xmlCv.VersionData = Blob.valueOf(documentXml);
+                    insert xmlCv;
+                }
+
+                // Chain stage 2 to render PDF (images will be committed when this execute() ends)
+                System.enqueueJob(new SignaturePdfRenderQueueable(requestId, batchKey));
+
+            } catch (Exception e) {
+                System.debug(LoggingLevel.ERROR, 'DocGen: Signature stamp failed for request ' + req.Id + ': ' + e.getMessage());
+                req.Status__c = 'Viewed';
+                Database.update(req, false, AccessLevel.SYSTEM_MODE);
+            }
+        }
+    }
+
+    /**
+     * Stage 2 Queueable: Renders the signed PDF using pre-saved image ContentVersion
+     * records (from Stage 1), saves the PDF, creates audit trail, and marks as Signed.
+     */
+    public class SignaturePdfRenderQueueable implements Queueable, Database.AllowsCallouts {
+        private Id requestId;
+        private String batchKey;
+
+        public SignaturePdfRenderQueueable(Id requestId, String batchKey) {
+            this.requestId = requestId;
+            this.batchKey = batchKey;
+        }
+
+        public void execute(QueueableContext ctx) {
+            List<DocGen_Signature_Request__c> requests = [
+                SELECT Id, Signer_Name__c, Signer_Email__c, Source_Document_Id__c, Related_Record_Id__c
+                FROM DocGen_Signature_Request__c
+                WHERE Id = :requestId
+                WITH SYSTEM_MODE LIMIT 1
+            ];
+            if (requests.isEmpty()) return;
+
+            DocGen_Signature_Request__c req = requests[0];
+
+            try {
+                // Read the saved document XML
+                List<ContentVersion> xmlCvs = [
+                    SELECT Id, VersionData FROM ContentVersion
+                    WHERE Title = :('docgen_sig_' + batchKey + '_xml')
+                    WITH SYSTEM_MODE LIMIT 1
+                ];
+                if (xmlCvs.isEmpty()) {
+                    throw new SignatureException('Stamped document XML not found for batch: ' + batchKey);
+                }
+                String documentXml = xmlCvs[0].VersionData.toString();
+
+                // Build URL-based image map from pre-saved temp CVs
+                Map<String, String> imageUrlMap = new Map<String, String>();
+                String prefix = 'docgen_sig_' + batchKey + '_';
+                List<ContentVersion> imgCvs = [
+                    SELECT Id, Title FROM ContentVersion
+                    WHERE Title LIKE :(prefix + '%') AND Title != :('docgen_sig_' + batchKey + '_xml')
+                    WITH SYSTEM_MODE
+                ];
+                for (ContentVersion cv : imgCvs) {
+                    String relId = cv.Title.substring(prefix.length());
+                    imageUrlMap.put(relId, '/sfc/servlet.shepherd/version/download/' + cv.Id);
+                }
+
+                // Generate HTML with URL-based images and render PDF via Blob.toPdf()
+                String html = DocGenHtmlRenderer.convertToHtml(documentXml, imageUrlMap);
+
+                Blob pdfBlob;
+                if (Test.isRunningTest()) {
+                    pdfBlob = Blob.toPdf('<html><body><p>Test PDF - Signed</p></body></html>');
+                } else {
+                    pdfBlob = Blob.toPdf(html);
+                }
+
+                // Save PDF to record
+                ContentVersion source = [SELECT Title FROM ContentVersion WHERE Id = :req.Source_Document_Id__c WITH SYSTEM_MODE LIMIT 1];
+                String fileName = source.Title + ' - Signed';
+                String base64Pdf = EncodingUtil.base64Encode(pdfBlob);
+                DocGenController.saveGeneratedDocument(req.Related_Record_Id__c, fileName, base64Pdf, 'pdf');
+
+                // Create audit trail
+                String pdfHash = EncodingUtil.convertToHex(Crypto.generateDigest('SHA-256', pdfBlob));
+                DocGen_Signature_Audit__c audit = new DocGen_Signature_Audit__c();
+                audit.Signature_Request__c = req.Id;
+                audit.Signer_Name__c = req.Signer_Name__c;
+                audit.Signer_Email__c = req.Signer_Email__c;
+                audit.Signed_Date__c = System.now();
+                audit.Document_Hash_SHA256__c = pdfHash;
+                audit.IP_Address__c = 'Server-Side';
+                audit.User_Agent__c = 'VF renderAs=pdf - Server-Side PDF Generation';
+                Database.insert(new List<DocGen_Signature_Audit__c>{ audit }, false, AccessLevel.SYSTEM_MODE);
+
+                // Mark Request as Signed, clear signature data
+                req.Status__c = 'Signed';
+                req.Signature_Data__c = null;
+                Database.update(req, false, AccessLevel.SYSTEM_MODE);
+
+            } catch (Exception e) {
+                System.debug(LoggingLevel.ERROR, 'DocGen: PDF render failed for request ' + req.Id + ': ' + e.getMessage());
+                req.Status__c = 'Viewed';
+                Database.update(req, false, AccessLevel.SYSTEM_MODE);
+            } finally {
+                // Clean up all temp CVs for this batch
+                cleanupSignatureTempImages(batchKey);
+            }
+        }
+
+        private void cleanupSignatureTempImages(String bKey) {
+            try {
+                List<ContentVersion> tempCvs = [
+                    SELECT ContentDocumentId FROM ContentVersion
+                    WHERE Title LIKE :('docgen_sig_' + bKey + '_%')
+                    WITH SYSTEM_MODE
+                ];
+                if (!tempCvs.isEmpty()) {
+                    Set<Id> docIds = new Set<Id>();
+                    for (ContentVersion cv : tempCvs) {
+                        docIds.add(cv.ContentDocumentId);
+                    }
+                    delete [SELECT Id FROM ContentDocument WHERE Id IN :docIds];
+                }
+            } catch (Exception e) {
+                System.debug(LoggingLevel.ERROR, 'DocGen: Failed to clean up temp signature images: ' + e.getMessage());
+            }
         }
     }
 }

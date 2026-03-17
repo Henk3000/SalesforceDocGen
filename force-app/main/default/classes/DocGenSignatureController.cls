@@ -347,8 +347,8 @@ public without sharing class DocGenSignatureController {
             return stampMultiSignerAndSavePdf(signerList[0]);
         }
 
-        // Legacy single-signer fallback
-        return stampLegacySignerAndSavePdf(token, base64Image);
+        // Legacy single-signer fallback (image already saved via saveLegacySignature)
+        return stampLegacySignerAndSavePdf(token);
     }
 
     private static Map<String, String> stampMultiSignerAndSavePdf(DocGen_Signer__c triggerSigner) {
@@ -357,29 +357,24 @@ public without sharing class DocGenSignatureController {
         String relatedRecordId = triggerSigner.Signature_Request__r.Related_Record_Id__c;
 
         try {
+            // Generate PDF via VF page (stamps signatures + renders HTML with images internally)
+            Blob pdfBlob = convertSignatureRequestToPdf(requestId);
+
+            ContentVersion sourceDoc = [SELECT Title FROM ContentVersion WHERE Id = :sourceDocId WITH SYSTEM_MODE LIMIT 1];
+            String fileName = sourceDoc.Title + ' - Signed';
+            String base64Pdf = EncodingUtil.base64Encode(pdfBlob);
+
+            // Save PDF to record
+            saveSignedDocument(relatedRecordId, fileName, base64Pdf, 'pdf');
+
+            // Query signers for audit trail
             List<DocGen_Signer__c> allSigners = [
-                SELECT Role_Name__c, Signature_Data__c, Signer_Name__c, Signer_Email__c, Contact__c
+                SELECT Signer_Name__c, Signer_Email__c, Contact__c
                 FROM DocGen_Signer__c
                 WHERE Signature_Request__c = :requestId AND Status__c = 'Signed'
                 WITH SYSTEM_MODE
                 ORDER BY Sort_Order__c ASC
             ];
-
-            List<DocGenSignatureService.SignerData> signerDataList = new List<DocGenSignatureService.SignerData>();
-            for (DocGen_Signer__c s : allSigners) {
-                signerDataList.add(new DocGenSignatureService.SignerData(s.Role_Name__c, s.Signature_Data__c));
-            }
-
-            Blob stampedBlob = DocGenSignatureService.stampAllSignaturesToBlob(sourceDocId, signerDataList);
-            ContentVersion sourceDoc = [SELECT Title FROM ContentVersion WHERE Id = :sourceDocId WITH SYSTEM_MODE LIMIT 1];
-            String fileName = sourceDoc.Title + ' - Signed';
-
-            // Server-side PDF generation
-            Blob pdfBlob = convertStampedDocxToPdf(stampedBlob);
-            String base64Pdf = EncodingUtil.base64Encode(pdfBlob);
-
-            // Save PDF to record
-            saveSignedDocument(relatedRecordId, fileName, base64Pdf, 'pdf');
 
             // Create per-signer audit trail for compliance (eIDAS/ESIGN)
             String pdfHash = EncodingUtil.convertToHex(Crypto.generateDigest('SHA-256', pdfBlob));
@@ -422,7 +417,31 @@ public without sharing class DocGenSignatureController {
         }
     }
 
-    private static Map<String, String> stampLegacySignerAndSavePdf(String token, String base64Image) {
+    /**
+     * Saves the signature image for a legacy single-signer request.
+     * Called as a separate transaction BEFORE stampAndReturnSource to avoid DML-before-callout.
+     */
+    @AuraEnabled
+    @RemoteAction
+    public static void saveLegacySignature(String token, String base64Image) {
+        if (String.isBlank(token) || token.length() != 64 || !Pattern.matches('[a-fA-F0-9]{64}', token)) {
+            throw new AuraHandledException('Invalid security token.');
+        }
+        List<DocGen_Signature_Request__c> requests = [
+            SELECT Id, Status__c
+            FROM DocGen_Signature_Request__c
+            WHERE Secure_Token__c = :token
+            WITH SYSTEM_MODE LIMIT 1
+        ];
+        if (requests.isEmpty() || requests[0].Status__c == 'Signed' || requests[0].Status__c == 'Cancelled') {
+            throw new AuraHandledException('Invalid request or document already signed.');
+        }
+        requests[0].Signature_Data__c = base64Image;
+        requests[0].Status__c = 'Viewed';
+        Database.update(requests[0], false, AccessLevel.SYSTEM_MODE);
+    }
+
+    private static Map<String, String> stampLegacySignerAndSavePdf(String token) {
         List<DocGen_Signature_Request__c> requests = [
             SELECT Id, Status__c, Signer_Name__c, Signer_Email__c, Source_Document_Id__c, Related_Record_Id__c
             FROM DocGen_Signature_Request__c
@@ -437,19 +456,19 @@ public without sharing class DocGenSignatureController {
         DocGen_Signature_Request__c req = requests[0];
 
         try {
-            Blob stampedBlob = DocGenSignatureService.stampSignatureToBlob(req.Source_Document_Id__c, base64Image, req.Id);
+            // PDF generation via VF page (stamps signatures internally, no DML before callout)
+            Blob pdfBlob = convertSignatureRequestToPdf(req.Id);
+
             ContentVersion sourceDoc = [SELECT Title FROM ContentVersion WHERE Id = :req.Source_Document_Id__c WITH SYSTEM_MODE LIMIT 1];
             String fileName = sourceDoc.Title + ' - Signed';
-
-            // Server-side PDF generation
-            Blob pdfBlob = convertStampedDocxToPdf(stampedBlob);
             String base64Pdf = EncodingUtil.base64Encode(pdfBlob);
 
             // Save PDF to record
             saveSignedDocument(req.Related_Record_Id__c, fileName, base64Pdf, 'pdf');
 
-            // Update request status (SYSTEM_MODE for guest user CRUD bypass)
+            // Update request status and clear signature data
             req.Status__c = 'Signed';
+            req.Signature_Data__c = null;
             Database.update(req, false, AccessLevel.SYSTEM_MODE);
 
             // Create audit trail
@@ -461,7 +480,7 @@ public without sharing class DocGenSignatureController {
             audit.Signed_Date__c = System.now();
             audit.Document_Hash_SHA256__c = pdfHash;
             audit.IP_Address__c = 'Server-Side';
-            audit.User_Agent__c = 'Blob.toPdf() - Server-Side PDF Generation';
+            audit.User_Agent__c = 'VF renderAs=pdf - Server-Side PDF Generation';
             Database.insert(new List<DocGen_Signature_Audit__c>{ audit }, false, AccessLevel.SYSTEM_MODE);
 
             return new Map<String, String>{
@@ -500,21 +519,36 @@ public without sharing class DocGenSignatureController {
     }
 
     /**
-     * Converts a stamped DOCX blob to PDF using DocGenHtmlRenderer + Blob.toPdf().
+     * Converts a stamped DOCX blob to HTML. Public so DocGenPdfRendererController can call it.
      */
-    private static Blob convertStampedDocxToPdf(Blob docxBlob) {
+    public static String convertStampedDocxToHtml(Blob docxBlob) {
         Map<String, Object> extracted = extractDocxParts(docxBlob);
         String documentXml = (String) extracted.get('documentXml');
         Map<String, String> imagesByRelId = (Map<String, String>) extracted.get('imagesByRelId');
-        String html = DocGenHtmlRenderer.convertToHtml(documentXml, imagesByRelId);
-        return Blob.toPdf(html);
+        return DocGenHtmlRenderer.convertToHtml(documentXml, imagesByRelId);
+    }
+
+    /**
+     * Generates a PDF from a signature request using VF page renderAs="pdf".
+     * Blob.toPdf() does not support data URI images, so we use the VF engine instead.
+     * In test context, falls back to Blob.toPdf() with simple HTML since getContentAsPDF()
+     * does not work in unit tests.
+     */
+    private static Blob convertSignatureRequestToPdf(Id requestId) {
+        if (Test.isRunningTest()) {
+            return Blob.toPdf('<html><body><p>Test PDF - Signed Document</p></body></html>');
+        }
+        PageReference pdfPage = Page.DocGenPdfRenderer;
+        pdfPage.getParameters().put('mode', 'signature');
+        pdfPage.getParameters().put('requestId', requestId);
+        return pdfPage.getContentAsPDF();
     }
 
     /**
      * Extracts document.xml, rels, and images from a DOCX blob.
      * Returns a map keyed by relationship ID → base64 image data (as the renderer expects).
      */
-    private static Map<String, Object> extractDocxParts(Blob docxBlob) {
+    public static Map<String, Object> extractDocxParts(Blob docxBlob) {
         Compression.ZipReader reader = new Compression.ZipReader(docxBlob);
         String documentXml = null;
         String relsXml = null;

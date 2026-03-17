@@ -151,7 +151,14 @@ export default class DocGenSignaturePad extends LightningElement {
             this.ctx.fillText('Signed: ' + timestamp, canvas.width - 10, canvas.height - 10);
             this.ctx.restore();
 
-            const dataUrl = canvas.toDataURL('image/png');
+            // Fill white background behind signature for PDF compatibility
+            this.ctx.save();
+            this.ctx.globalCompositeOperation = 'destination-over';
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.fillRect(0, 0, canvas.width, canvas.height);
+            this.ctx.restore();
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
             this.signatureData = dataUrl.split(',')[1];
 
             this.isLocked = true;

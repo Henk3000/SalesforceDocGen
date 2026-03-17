@@ -2,9 +2,12 @@ import { LightningElement, api, wire, track } from 'lwc';
 import { ShowToastEvent } from 'lightning/platformShowToastEvent';
 import getTemplatesForObject from '@salesforce/apex/DocGenController.getTemplatesForObject';
 import processAndReturnDocument from '@salesforce/apex/DocGenController.processAndReturnDocument';
-import generatePdfDocument from '@salesforce/apex/DocGenController.generatePdfDocument';
-import generateAndSavePdfDocument from '@salesforce/apex/DocGenController.generateAndSavePdfDocument';
+import generatePdfAsync from '@salesforce/apex/DocGenController.generatePdfAsync';
+import checkPdfResult from '@salesforce/apex/DocGenController.checkPdfResult';
 import saveGeneratedDocument from '@salesforce/apex/DocGenController.saveGeneratedDocument';
+
+const PDF_POLL_INTERVAL = 2000; // 2 seconds
+const PDF_POLL_MAX_ATTEMPTS = 30; // 60 seconds max
 
 export default class DocGenRunner extends LightningElement {
     @api recordId;
@@ -18,6 +21,7 @@ export default class DocGenRunner extends LightningElement {
     isLoading = false;
     error;
     _templateData = [];
+    _pollTimer;
 
     get outputOptions() {
         const formatLabel = this.templateOutputFormat || 'Document';
@@ -68,6 +72,18 @@ export default class DocGenRunner extends LightningElement {
         return !this.selectedTemplateId || this.isLoading;
     }
 
+    disconnectedCallback() {
+        this._clearPollTimer();
+    }
+
+    _clearPollTimer() {
+        if (this._pollTimer) {
+            // eslint-disable-next-line @lwc/lwc/no-async-operation
+            clearInterval(this._pollTimer);
+            this._pollTimer = null;
+        }
+    }
+
     async generateDocument() {
         this.isLoading = true;
         this.error = null;
@@ -79,25 +95,25 @@ export default class DocGenRunner extends LightningElement {
             const isPDF = this.templateOutputFormat === 'PDF' && !isPPT;
 
             if (isPDF) {
-                // Server-side PDF generation
-                if (this.outputMode === 'save') {
-                    this.showToast('Info', 'Generating and saving PDF...', 'info');
-                    await generateAndSavePdfDocument({
-                        templateId: this.selectedTemplateId,
-                        recordId: this.recordId
-                    });
-                    this.showToast('Success', 'PDF saved to record.', 'success');
+                // Async PDF generation via Queueable (required for image rendering)
+                this.showToast('Info', 'Generating PDF...', 'info');
+                const saveToRecord = this.outputMode === 'save';
+
+                const result = await generatePdfAsync({
+                    templateId: this.selectedTemplateId,
+                    recordId: this.recordId,
+                    saveToRecord: saveToRecord
+                });
+
+                if (saveToRecord) {
+                    // PDF will be saved to record by the Queueable
+                    this.showToast('Success', 'PDF is being generated and will be saved to the record shortly.', 'success');
+                    this.isLoading = false;
                 } else {
-                    this.showToast('Info', 'Generating PDF...', 'info');
-                    const result = await generatePdfDocument({
-                        templateId: this.selectedTemplateId,
-                        recordId: this.recordId
-                    });
-                    if (!result || !result.base64) {
-                        throw new Error('PDF generation returned empty result.');
-                    }
-                    this.downloadBase64(result.base64, (result.title || 'Document') + '.pdf', 'application/pdf');
-                    this.showToast('Success', 'PDF downloaded.', 'success');
+                    // Download mode: poll for the result
+                    const resultKey = result.resultKey;
+                    const docTitle = result.title || 'Document';
+                    this._pollForPdfResult(resultKey, docTitle);
                 }
             } else {
                 // Native DOCX/PPTX path
@@ -126,6 +142,7 @@ export default class DocGenRunner extends LightningElement {
                     this.downloadBase64(result.base64, docTitle + '.' + ext, 'application/octet-stream');
                     this.showToast('Success', `${isPPT ? 'PowerPoint' : 'Word document'} downloaded.`, 'success');
                 }
+                this.isLoading = false;
             }
         } catch (e) {
             let msg = 'Unknown error during generation';
@@ -137,9 +154,36 @@ export default class DocGenRunner extends LightningElement {
                 msg = e;
             }
             this.error = 'Generation Error: ' + msg;
-        } finally {
             this.isLoading = false;
         }
+    }
+
+    /**
+     * Polls for async PDF generation result and triggers download when ready.
+     */
+    _pollForPdfResult(resultKey, docTitle) {
+        let attempts = 0;
+        // eslint-disable-next-line @lwc/lwc/no-async-operation
+        this._pollTimer = setInterval(async () => {
+            attempts++;
+            try {
+                const result = await checkPdfResult({ resultKey: resultKey });
+                if (result && result.base64) {
+                    this._clearPollTimer();
+                    this.downloadBase64(result.base64, docTitle + '.pdf', 'application/pdf');
+                    this.showToast('Success', 'PDF downloaded.', 'success');
+                    this.isLoading = false;
+                } else if (attempts >= PDF_POLL_MAX_ATTEMPTS) {
+                    this._clearPollTimer();
+                    this.error = 'PDF generation timed out. Please check the record for the generated file.';
+                    this.isLoading = false;
+                }
+            } catch (err) {
+                this._clearPollTimer();
+                this.error = 'Error checking PDF result: ' + (err.body ? err.body.message : err.message);
+                this.isLoading = false;
+            }
+        }, PDF_POLL_INTERVAL);
     }
 
     /**

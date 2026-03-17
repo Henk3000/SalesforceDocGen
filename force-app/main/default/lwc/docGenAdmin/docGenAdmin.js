@@ -10,7 +10,8 @@ import deleteTemplate from '@salesforce/apex/DocGenController.deleteTemplate';
 import saveTemplate from '@salesforce/apex/DocGenController.saveTemplate';
 import getTemplateVersions from '@salesforce/apex/DocGenController.getTemplateVersions';
 import processAndReturnDocument from '@salesforce/apex/DocGenController.processAndReturnDocument';
-import generatePdfDocument from '@salesforce/apex/DocGenController.generatePdfDocument';
+import generatePdfAsync from '@salesforce/apex/DocGenController.generatePdfAsync';
+import checkPdfResult from '@salesforce/apex/DocGenController.checkPdfResult';
 import activateVersion from '@salesforce/apex/DocGenController.activateVersion';
 
 // Schema
@@ -568,19 +569,23 @@ const VERSION_COLUMNS = [
                 this.downloadBase64(result.base64, docTitle + ext, 'application/octet-stream');
                 this.showToast('Success', 'Sample Document Downloaded', 'success');
             } else {
-                // PDF via server-side rendering
+                // PDF via async Queueable (required for image rendering)
                 this.showToast('Info', 'Generating PDF Sample...', 'info');
-                const result = await generatePdfDocument({
+                const asyncResult = await generatePdfAsync({
                     templateId: this.editTemplateId,
-                    recordId: this.editTemplateTestRecordId
+                    recordId: this.editTemplateTestRecordId,
+                    saveToRecord: false
                 });
 
-                if (!result || !result.base64) {
-                    throw new Error('PDF generation returned empty result.');
-                }
+                const resultKey = asyncResult.resultKey;
+                const pdfTitle = 'Sample_' + (asyncResult.title || 'Document');
 
-                const docTitle = 'Sample_' + (result.title || 'Document');
-                this.downloadBase64(result.base64, docTitle + '.pdf', 'application/pdf');
+                // Poll for async PDF result
+                const pdfResult = await this._waitForPdfResult(resultKey);
+                if (!pdfResult || !pdfResult.base64) {
+                    throw new Error('PDF generation timed out or returned empty result.');
+                }
+                this.downloadBase64(pdfResult.base64, pdfTitle + '.pdf', 'application/pdf');
                 this.showToast('Success', 'PDF Sample Generated', 'success');
             }
         } catch (error) {
@@ -594,6 +599,25 @@ const VERSION_COLUMNS = [
         } finally {
             this.isLoadingVersions = false;
         }
+    }
+
+    /**
+     * Polls for async PDF generation result, returning when ready or after timeout.
+     */
+    async _waitForPdfResult(resultKey) {
+        const maxAttempts = 30;
+        const interval = 2000;
+        for (let i = 0; i < maxAttempts; i++) {
+            await new Promise(resolve => {
+                // eslint-disable-next-line @lwc/lwc/no-async-operation
+                setTimeout(resolve, interval);
+            });
+            const result = await checkPdfResult({ resultKey: resultKey });
+            if (result && result.base64) {
+                return result;
+            }
+        }
+        return null;
     }
 
     /**

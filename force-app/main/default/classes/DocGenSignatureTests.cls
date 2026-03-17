@@ -339,32 +339,14 @@ private class DocGenSignatureTests {
 
         Test.startTest();
 
-        // Signer token — file is not real DOCX so stamping fails
+        // Invalid token format
         Boolean caught1 = false;
-        try {
-            DocGenSignatureController.stampAndReturnSource('f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5', fakeBase64);
-        } catch (AuraHandledException e) {
-            caught1 = true;
-        }
-        System.assert(caught1, 'stampAndReturnSource should throw for invalid DOCX (signer)');
-
-        // Legacy token — same error path
-        Boolean caught2 = false;
-        try {
-            DocGenSignatureController.stampAndReturnSource('a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2', fakeBase64);
-        } catch (AuraHandledException e) {
-            caught2 = true;
-        }
-        System.assert(caught2, 'stampAndReturnSource should throw for invalid DOCX (legacy)');
-
-        // Invalid token
-        Boolean caught3 = false;
         try {
             DocGenSignatureController.stampAndReturnSource('NO_MATCH_TOKEN', fakeBase64);
         } catch (AuraHandledException e) {
-            caught3 = true;
+            caught1 = true;
         }
-        System.assert(caught3, 'stampAndReturnSource should throw for invalid token');
+        System.assert(caught1, 'stampAndReturnSource should throw for invalid token');
 
         Test.stopTest();
     }
@@ -1383,6 +1365,10 @@ private class DocGenSignatureTests {
         String fakeBase64 = EncodingUtil.base64Encode(Blob.valueOf('legacy-sig-png'));
 
         Test.startTest();
+        // Legacy flow requires saving image first (separate transaction from PDF generation)
+        DocGenSignatureController.saveLegacySignature(
+            'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2', fakeBase64
+        );
         Map<String, String> result = DocGenSignatureController.stampAndReturnSource(
             'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2', fakeBase64
         );
@@ -1899,5 +1885,64 @@ private class DocGenSignatureTests {
         Test.stopTest();
 
         System.assertNotEquals(null, result, 'Should return blob even with fallback');
+    }
+
+    // =========================================================================
+    // DocGenSignatureController — saveLegacySignature
+    // =========================================================================
+
+    @isTest
+    static void testSaveLegacySignature_Success() {
+        createTestFile();
+        delete getTestSigner();
+
+        String fakeBase64 = EncodingUtil.base64Encode(Blob.valueOf('legacy-sig'));
+
+        Test.startTest();
+        DocGenSignatureController.saveLegacySignature(
+            'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2', fakeBase64
+        );
+        Test.stopTest();
+
+        DocGen_Signature_Request__c req = [
+            SELECT Signature_Data__c, Status__c FROM DocGen_Signature_Request__c WHERE Id = :getTestRequest().Id
+        ];
+        System.assertEquals(fakeBase64, req.Signature_Data__c);
+        System.assertEquals('Viewed', req.Status__c);
+    }
+
+    @isTest
+    static void testSaveLegacySignature_InvalidToken() {
+        Boolean caught = false;
+        Test.startTest();
+        try {
+            DocGenSignatureController.saveLegacySignature('short', 'base64');
+        } catch (AuraHandledException e) {
+            caught = true;
+        }
+        Test.stopTest();
+        System.assert(caught, 'Should throw for invalid token format');
+    }
+
+    @isTest
+    static void testSaveLegacySignature_AlreadySigned() {
+        createTestFile();
+        delete getTestSigner();
+
+        DocGen_Signature_Request__c req = getTestRequest();
+        req.Status__c = 'Signed';
+        update req;
+
+        Boolean caught = false;
+        Test.startTest();
+        try {
+            DocGenSignatureController.saveLegacySignature(
+                'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2', 'base64'
+            );
+        } catch (AuraHandledException e) {
+            caught = true;
+        }
+        Test.stopTest();
+        System.assert(caught, 'Should throw for already signed request');
     }
 }

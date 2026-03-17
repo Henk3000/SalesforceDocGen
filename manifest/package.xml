@@ -19,6 +19,7 @@
         <members>DocGenHtmlRenderer</members>
         <members>DocGenHtmlRendererTest</members>
         <members>DocGenMiscTests</members>
+        <members>DocGenPdfRendererController</members>
         <members>DocGenService</members>
         <members>DocGenSetupController</members>
         <members>DocGenSharingTests</members>
@@ -34,6 +35,7 @@
         <name>ApexClass</name>
     </types>
     <types>
+        <members>DocGenPdfRenderer</members>
         <members>DocGenSign</members>
         <members>DocGenSignature</members>
         <members>DocGenVerify</members>

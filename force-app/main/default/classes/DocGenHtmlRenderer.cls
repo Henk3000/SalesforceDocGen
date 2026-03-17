@@ -456,16 +456,24 @@ public with sharing class DocGenHtmlRenderer {
         String relId = extractAttr(drawingXml, 'a:blip', 'r:embed');
         if (relId == null) return '';
 
-        String base64 = images.get(relId);
-        if (base64 == null) return '';
+        String imageValue = images.get(relId);
+        if (imageValue == null) return '';
 
-        // Determine MIME type
+        // If the value is a URL (Salesforce content path or absolute URL), use directly as img src
+        if (imageValue.startsWith('/sfc/') || imageValue.startsWith('/servlet/') ||
+            imageValue.startsWith('/apex/') || imageValue.startsWithIgnoreCase('http')) {
+            return '<img src="' + imageValue + '" ' +
+                   'width="' + widthPx + '" height="' + heightPx + '" ' +
+                   'style="max-width:100%" />';
+        }
+
+        // Otherwise treat as base64 — determine MIME type and create data URI
         String mimeType = 'image/png';
-        if (base64.startsWith('/9j/') || base64.startsWith('/9J/')) {
+        if (imageValue.startsWith('/9j/') || imageValue.startsWith('/9J/')) {
             mimeType = 'image/jpeg';
         }
 
-        return '<img src="data:' + mimeType + ';base64,' + base64 + '" ' +
+        return '<img src="data:' + mimeType + ';base64,' + imageValue + '" ' +
                'width="' + widthPx + '" height="' + heightPx + '" ' +
                'style="max-width:100%" />';
     }
