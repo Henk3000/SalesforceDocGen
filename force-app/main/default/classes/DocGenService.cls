@@ -3,6 +3,7 @@ public with sharing class DocGenService {
     // Collector for images to inject after XML processing
     private static List<Map<String, Object>> pendingImages = new List<Map<String, Object>>();
     private static Integer imageCounter = 0;
+    private static String currentTemplateType = 'Word'; // Set before processXml calls
 
     /**
      * Intermediate merge result containing processed XML, images, and passthrough ZIP entries.
@@ -97,7 +98,10 @@ public with sharing class DocGenService {
             if (isTargetXml) {
                 Blob content = reader.extract(name);
                 String xml = content.toString();
-                xml = mergeRunsInTags(xml);
+                currentTemplateType = templateType;
+                if (templateType == 'Word') {
+                    xml = mergeRunsInTags(xml);
+                }
                 xml = processXml(xml, recordDataMap);
                 mr.processedXmlEntries.put(name, xml);
                 if (name == 'word/document.xml') {
@@ -366,7 +370,8 @@ public with sharing class DocGenService {
 
         if (!newCvs.isEmpty()) {
             // FirstPublishLocationId links the CVs to the version record automatically
-            insert newCvs;
+            SObjectAccessDecision cvDecision = Security.stripInaccessible(AccessType.CREATABLE, newCvs);
+            insert cvDecision.getRecords();
         }
     }
 
@@ -427,7 +432,8 @@ public with sharing class DocGenService {
                 tempImages.add(cv);
             }
             if (!tempImages.isEmpty()) {
-                insert tempImages;
+                SObjectAccessDecision tmpDecision = Security.stripInaccessible(AccessType.CREATABLE, tempImages);
+                insert tmpDecision.getRecords();
             }
         }
 
@@ -500,7 +506,8 @@ public with sharing class DocGenService {
             tempImages.add(cv);
         }
         if (!tempImages.isEmpty()) {
-            insert tempImages;
+            SObjectAccessDecision tmpDecision = Security.stripInaccessible(AccessType.CREATABLE, tempImages);
+            insert tmpDecision.getRecords();
         }
         return batchKey;
     }
@@ -519,6 +526,9 @@ public with sharing class DocGenService {
             Set<Id> docIds = new Set<Id>();
             for (ContentVersion cv : tempCvs) {
                 docIds.add(cv.ContentDocumentId);
+            }
+            if (!Schema.sObjectType.ContentDocument.isDeletable()) {
+                throw new DocGenException('Insufficient access to delete temporary images.');
             }
             delete [SELECT Id FROM ContentDocument WHERE Id IN :docIds];
         }
@@ -888,7 +898,12 @@ public with sharing class DocGenService {
                 output += '{' + rawTag + '}';
                 cursor = tagClose + 1;
             } else if (tagContent.startsWith('%')) {
-                // Image tag: {%FieldName} or {%FieldName:WxH} — inject image with optional pixel dimensions
+                // Image tag: {%FieldName} or {%FieldName:WxH}
+                // PowerPoint: skip image injection (Word-specific DrawingML corrupts PPTX)
+                if (currentTemplateType == 'PowerPoint') {
+                    cursor = tagClose + 1;
+                    continue;
+                }
                 String imageSpec = tagContent.substring(1).trim();
                 String imageField = imageSpec;
                 Integer imgWidthPx = null;
@@ -939,13 +954,19 @@ public with sharing class DocGenService {
                         strVal = String.valueOf(val);
                     }
                     // Rich text HTML — convert to DOCX XML preserving formatting, images, and paragraphs
+                    // PowerPoint: strip HTML tags and output plain text (Word XML corrupts PPTX)
                     if (strVal.contains('<') && strVal.contains('>') &&
                         (strVal.containsIgnoreCase('<p') || strVal.containsIgnoreCase('<div') ||
                          strVal.containsIgnoreCase('<span') || strVal.containsIgnoreCase('<br') ||
                          strVal.containsIgnoreCase('<img') || strVal.containsIgnoreCase('<b>') ||
                          strVal.containsIgnoreCase('<i>') || strVal.containsIgnoreCase('<u>') ||
                          strVal.containsIgnoreCase('<strong') || strVal.containsIgnoreCase('<em'))) {
-                        output += convertRichTextToDocxXml(strVal);
+                        if (currentTemplateType == 'PowerPoint') {
+                            // Strip HTML tags for plain text in PPTX
+                            output += strVal.replaceAll('<[^>]+>', ' ').replaceAll('\\s+', ' ').trim().escapeXml();
+                        } else {
+                            output += convertRichTextToDocxXml(strVal);
+                        }
                     }
                     else {
                         output += strVal.escapeXml();
