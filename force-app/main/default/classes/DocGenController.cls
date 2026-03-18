@@ -77,8 +77,19 @@ public with sharing class DocGenController {
      */
     @AuraEnabled
     public static Map<String, Object> processAndReturnDocument(Id templateId, Id recordId) {
+        return processAndReturnDocumentWithImages(templateId, recordId, null);
+    }
+
+    /**
+     * Processes a template with record data and optional pre-resolved images.
+     * The LWC can fetch RTF images via the browser session and pass them as
+     * a map of originalUrl → base64DataUri. This enables DOCX image embedding
+     * without server-side HTTP callouts (AppExchange safe).
+     */
+    @AuraEnabled
+    public static Map<String, Object> processAndReturnDocumentWithImages(Id templateId, Id recordId, Map<String, String> resolvedImages) {
         try {
-            Map<String, Object> result = DocGenService.processDocument(templateId, recordId);
+            Map<String, Object> result = DocGenService.processDocument(templateId, recordId, resolvedImages);
             Blob docBlob = (Blob) result.get('blob');
             return new Map<String, Object>{
                 'base64' => EncodingUtil.base64Encode(docBlob),
@@ -195,6 +206,14 @@ public with sharing class DocGenController {
                 version.Base_Object_API__c = (String) fields.get('Base_Object_API__c');
 
                 insert version;
+
+                // Extract images from DOCX/PPTX and save as ContentVersions linked to the version.
+                // Blob.toPdf() cannot render data URI images — needs committed CV URLs.
+                try {
+                    DocGenService.extractAndSaveTemplateImages(templateId, version.Id);
+                } catch (Exception imgErr) {
+                    System.debug(LoggingLevel.WARN, 'DocGen: Template image extraction: ' + imgErr.getMessage());
+                }
             }
         } catch (Exception e) {
             System.debug(LoggingLevel.ERROR, 'DocGen: Error saving template: ' + e.getMessage());
@@ -344,40 +363,40 @@ public with sharing class DocGenController {
     }
 
     /**
-     * Generates a PDF asynchronously via Queueable (required for image rendering).
-     * Blob.toPdf() can only fetch images from URLs in Queueable/Batch context.
+     * Generates a PDF synchronously via Blob.toPdf() with images as data URIs.
      * For "save" mode: PDF is saved directly to the record.
-     * For "download" mode: PDF is saved as a temp CV that can be polled via checkPdfResult().
-     * Returns resultKey for polling (download mode) or null (save mode).
+     * For "download" mode: returns base64 PDF for client-side download.
      */
     @AuraEnabled
     public static Map<String, Object> generatePdfAsync(Id templateId, Id recordId, Boolean saveToRecord) {
         try {
-            Map<String, Object> prep = DocGenService.preparePdfImages(templateId, recordId);
-            String batchKey = (String) prep.get('batchKey');
-            String docTitle = (String) prep.get('title');
+            Map<String, Object> result = DocGenService.generatePdfDirect(templateId, recordId);
+            Blob pdfBlob = (Blob) result.get('blob');
+            String docTitle = (String) result.get('title');
+            if (docTitle == null) docTitle = 'Generated_Document';
 
             if (saveToRecord) {
-                System.enqueueJob(new DocGenPdfQueueable(templateId, recordId, batchKey, docTitle));
+                ContentVersion cv = new ContentVersion();
+                cv.Title = docTitle;
+                cv.PathOnClient = docTitle + '.pdf';
+                cv.VersionData = pdfBlob;
+                cv.FirstPublishLocationId = recordId;
+                SObjectAccessDecision cvDecision = Security.stripInaccessible(AccessType.CREATABLE, new List<ContentVersion>{ cv });
+                insert cvDecision.getRecords();
+
                 return new Map<String, Object>{
                     'title' => docTitle,
-                    'async' => true
+                    'saved' => true
                 };
             } else {
-                // Download mode: generate a result key for polling
-                String resultKey = EncodingUtil.convertToHex(
-                    Crypto.generateDigest('SHA-256', Blob.valueOf(String.valueOf(System.now().getTime()) + Math.random()))
-                ).substring(0, 16);
-                System.enqueueJob(new DocGenPdfQueueable(templateId, recordId, batchKey, docTitle, resultKey));
                 return new Map<String, Object>{
-                    'title' => docTitle,
-                    'resultKey' => resultKey,
-                    'async' => true
+                    'base64' => EncodingUtil.base64Encode(pdfBlob),
+                    'title' => docTitle
                 };
             }
         } catch (Exception e) {
-            System.debug(LoggingLevel.ERROR, 'DocGen: Error starting PDF generation: ' + e.getMessage());
-            throw new AuraHandledException('Error starting PDF generation. Please check the template configuration.');
+            System.debug(LoggingLevel.ERROR, 'DocGen: Error generating PDF: ' + e.getMessage());
+            throw new AuraHandledException('Error generating PDF document. Please check the template configuration.');
         }
     }
 
@@ -413,13 +432,12 @@ public with sharing class DocGenController {
     }
 
     /**
-     * Legacy: Generates a PDF document server-side and returns it as base64 for download.
-     * Images will not render in PDF. Use generatePdfAsync for image support.
+     * Generates a PDF document server-side and returns it as base64 for download.
      */
     @AuraEnabled
     public static Map<String, Object> generatePdfDocument(Id templateId, Id recordId) {
         try {
-            Map<String, Object> result = DocGenService.processDocumentAsPdf(templateId, recordId);
+            Map<String, Object> result = DocGenService.generatePdfDirect(templateId, recordId);
             Blob pdfBlob = (Blob) result.get('blob');
             return new Map<String, Object>{
                 'base64' => EncodingUtil.base64Encode(pdfBlob),
@@ -432,13 +450,13 @@ public with sharing class DocGenController {
     }
 
     /**
-     * Legacy: Generates a PDF document server-side and saves it to the record.
+     * Generates a PDF document server-side and saves it to the record.
      * Returns the ContentDocumentId.
      */
     @AuraEnabled
     public static Id generateAndSavePdfDocument(Id templateId, Id recordId) {
         try {
-            Map<String, Object> result = DocGenService.processDocumentAsPdf(templateId, recordId);
+            Map<String, Object> result = DocGenService.generatePdfDirect(templateId, recordId);
             Blob pdfBlob = (Blob) result.get('blob');
             String title = (String) result.get('title');
             if (title == null) title = 'Generated_Document';
@@ -681,37 +699,22 @@ public with sharing class DocGenController {
     // --- Rich Text Image Resolution ---
 
     /**
-     * Recursively walks record data and converts Salesforce rtaImage URLs
-     * in rich text fields to base64 data URIs using the REST API via session-based auth.
-     * Passes record context (Id, field name) so we can call the richTextImageFields endpoint.
+     * Recursively walks record data and normalizes Salesforce image URLs in rich text
+     * fields to absolute URLs. No HTTP callouts — Blob.toPdf() resolves Salesforce URLs
+     * natively via the VF rendering engine. For DOCX, processRichTextImage fetches blobs
+     * using the URL. No session IDs needed (AppExchange safe).
      */
     private static void resolveRichTextImages(Object data) {
         if (data instanceof Map<String, Object>) {
             Map<String, Object> mapData = (Map<String, Object>) data;
 
-            // Get record Id and object type from this map level
-            String recordId = null;
-            String objectType = null;
-            if (mapData.containsKey('Id')) {
-                try {
-                    recordId = String.valueOf(mapData.get('Id'));
-                    objectType = Id.valueOf(recordId).getSObjectType().getDescribe().getName();
-                } catch (Exception e) {
-                    recordId = null;
-                }
-            }
-
             for (String key : new List<String>(mapData.keySet())) {
                 Object val = mapData.get(key);
                 if (val instanceof String) {
                     String strVal = (String) val;
-                    // Resolve Salesforce rich text image URLs (refid-based) to base64 data URIs
-                    if (strVal.containsIgnoreCase('<img') && strVal.containsIgnoreCase('refid=')) {
-                        mapData.put(key, resolveImageUrlsInHtml(strVal, objectType, recordId, key));
-                    }
-                    // Also resolve Salesforce servlet/sfc URLs in img tags (without refid)
-                    else if (strVal.containsIgnoreCase('<img') && (strVal.containsIgnoreCase('/servlet/') || strVal.containsIgnoreCase('/sfc/'))) {
-                        mapData.put(key, resolveServletImageUrls(strVal));
+                    if (strVal.containsIgnoreCase('<img') &&
+                        (strVal.containsIgnoreCase('refid=') || strVal.containsIgnoreCase('/servlet/') || strVal.containsIgnoreCase('/sfc/'))) {
+                        mapData.put(key, normalizeImageUrls(strVal));
                     }
                 } else {
                     resolveRichTextImages(val);
@@ -725,104 +728,20 @@ public with sharing class DocGenController {
     }
 
     /**
-     * Resolves Salesforce servlet/sfc image URLs in HTML to base64 data URIs via session-based auth.
+     * Normalizes relative Salesforce image URLs to absolute URLs.
+     * No HTTP callouts, no session IDs. Blob.toPdf() resolves these natively.
      */
-    private static String resolveServletImageUrls(String html) {
+    private static String normalizeImageUrls(String html) {
         try {
-            Pattern imgPattern = Pattern.compile('(?i)<img[^>]+src\\s*=\\s*["\']([^"\']+)["\']');
-            Matcher m = imgPattern.matcher(html.replace('&amp;', '&'));
-            String result = html;
             String baseUrl = URL.getOrgDomainUrl().toExternalForm();
-
-            while (m.find()) {
-                String src = m.group(1);
-                if (src.startsWith('data:')) continue; // Already resolved
-
-                String path = null;
-                if (src.containsIgnoreCase('servlet/rtaImage')) {
-                    path = '/servlet/' + src.substringAfter('/servlet/');
-                } else if (src.containsIgnoreCase('/servlet/') || src.containsIgnoreCase('/sfc/')) {
-                    path = src.contains('://') ? src.substringAfter('.com') : src;
-                }
-
-                if (path != null) {
-                    HttpRequest req = new HttpRequest();
-                    req.setEndpoint(baseUrl + path);
-                    req.setMethod('GET');
-                    req.setHeader('Authorization', 'Bearer ' + UserInfo.getSessionId());
-                    req.setTimeout(15000);
-                    Http h = new Http();
-                    HttpResponse res = h.send(req);
-                    if (res.getStatusCode() == 200) {
-                        String contentType = res.getHeader('Content-Type');
-                        if (String.isBlank(contentType) || !contentType.startsWith('image/')) contentType = 'image/png';
-                        String base64 = EncodingUtil.base64Encode(res.getBodyAsBlob());
-                        String dataUri = 'data:' + contentType + ';base64,' + base64;
-                        result = result.replace(src, dataUri);
-                    }
-                }
-            }
-            return result;
+            // Replace relative paths with absolute, handling both & and &amp; forms
+            // Pattern: src="/servlet/..." or src="/sfc/..."
+            html = html.replaceAll('(?i)(src\\s*=\\s*["\'])(/servlet/)', '$1' + baseUrl + '$2');
+            html = html.replaceAll('(?i)(src\\s*=\\s*["\'])(/sfc/)', '$1' + baseUrl + '$2');
+            return html;
         } catch (Exception e) {
-            System.debug(LoggingLevel.WARN, 'DocGen: resolveServletImageUrls failed: ' + e.getMessage());
+            System.debug(LoggingLevel.WARN, 'DocGen: normalizeImageUrls failed: ' + e.getMessage());
             return html;
         }
-    }
-
-    /**
-     * Finds Salesforce rich text image references in HTML and replaces them with base64 data URIs
-     * using the REST API: /services/data/vXX.0/sobjects/{Object}/{Id}/richTextImageFields/{Field}/{RefId}
-     */
-    private static String resolveImageUrlsInHtml(String html, String objectType, String recordId, String fieldName) {
-        if (String.isBlank(objectType) || String.isBlank(recordId) || String.isBlank(fieldName)) {
-            return html;
-        }
-
-        // Find all refid values in the HTML
-        Pattern refidPattern = Pattern.compile('(?i)refid=([a-zA-Z0-9]+)');
-        Matcher m = refidPattern.matcher(html.replace('&amp;', '&'));
-        String result = html;
-        Set<String> processed = new Set<String>();
-        String baseUrl = URL.getOrgDomainUrl().toExternalForm();
-
-        while (m.find()) {
-            String refId = m.group(1);
-            if (processed.contains(refId)) continue;
-            processed.add(refId);
-
-            try {
-                String apiPath = '/services/data/v66.0/sobjects/' + objectType + '/' + recordId
-                    + '/richTextImageFields/' + fieldName + '/' + refId;
-
-                HttpRequest req = new HttpRequest();
-                req.setEndpoint(baseUrl + apiPath);
-                req.setMethod('GET');
-                req.setHeader('Authorization', 'Bearer ' + UserInfo.getSessionId());
-                req.setTimeout(15000);
-                Http h = new Http();
-                HttpResponse res = h.send(req);
-
-                if (res.getStatusCode() == 200) {
-                    String contentType = res.getHeader('Content-Type');
-                    if (String.isBlank(contentType) || !contentType.startsWith('image/')) {
-                        contentType = 'image/png';
-                    }
-                    String base64 = EncodingUtil.base64Encode(res.getBodyAsBlob());
-                    String dataUri = 'data:' + contentType + ';base64,' + base64;
-
-                    // Replace all img src attributes that reference this refid
-                    Pattern srcPattern = Pattern.compile('(?i)(<img[^>]+src\\s*=\\s*["\'])([^"\']*refid=' + refId + '[^"\']*)(["\'\\s])');
-                    Matcher srcMatcher = srcPattern.matcher(result);
-                    if (srcMatcher.find()) {
-                        result = result.replace(srcMatcher.group(2), dataUri);
-                    }
-                } else {
-                    System.debug(LoggingLevel.WARN, 'DocGen: richTextImageFields returned ' + res.getStatusCode() + ' for ' + apiPath.left(200));
-                }
-            } catch (Exception e) {
-                System.debug(LoggingLevel.WARN, 'DocGen: Failed to resolve rich text image: ' + e.getMessage());
-            }
-        }
-        return result;
     }
 }

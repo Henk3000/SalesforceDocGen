@@ -95,7 +95,6 @@ export default class DocGenRunner extends LightningElement {
             const isPDF = this.templateOutputFormat === 'PDF' && !isPPT;
 
             if (isPDF) {
-                // Async PDF generation via Queueable (required for image rendering)
                 this.showToast('Info', 'Generating PDF...', 'info');
                 const saveToRecord = this.outputMode === 'save';
 
@@ -105,16 +104,14 @@ export default class DocGenRunner extends LightningElement {
                     saveToRecord: saveToRecord
                 });
 
-                if (saveToRecord) {
-                    // PDF will be saved to record by the Queueable
-                    this.showToast('Success', 'PDF is being generated and will be saved to the record shortly.', 'success');
-                    this.isLoading = false;
-                } else {
-                    // Download mode: poll for the result
-                    const resultKey = result.resultKey;
+                if (result.saved) {
+                    this.showToast('Success', 'PDF saved to record.', 'success');
+                } else if (result.base64) {
                     const docTitle = result.title || 'Document';
-                    this._pollForPdfResult(resultKey, docTitle);
+                    this.downloadBase64(result.base64, docTitle + '.pdf', 'application/pdf');
+                    this.showToast('Success', 'PDF downloaded.', 'success');
                 }
+                this.isLoading = false;
             } else {
                 // Native DOCX/PPTX path
                 const result = await processAndReturnDocument({

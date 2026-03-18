@@ -15,7 +15,8 @@ public with sharing class DocGenService {
         String relsXml;                                       // word/_rels/document.xml.rels
         String relsPath;                                      // Path to rels file
         String mediaPath;                                     // Path prefix for media files
-        Map<String, String> imageBase64ByRelId;               // relId → base64 image data for HTML rendering
+        Map<String, String> imageBase64ByRelId;               // relId → base64 image data (for DOCX and fallback)
+        Map<String, String> imageUrlByRelId;                  // relId → absolute URL (for PDF rendering via Blob.toPdf)
         String templateType;
         String outputFormat;
         String docTitle;
@@ -24,6 +25,7 @@ public with sharing class DocGenService {
             processedXmlEntries = new Map<String, String>();
             passthroughEntries = new Map<String, Blob>();
             imageBase64ByRelId = new Map<String, String>();
+            imageUrlByRelId = new Map<String, String>();
         }
     }
 
@@ -32,6 +34,10 @@ public with sharing class DocGenService {
      * Returns structured intermediate data without assembling into a final format.
      */
     private static MergeResult mergeTemplate(Id templateId, Id recordId) {
+        return mergeTemplate(templateId, recordId, null);
+    }
+
+    private static MergeResult mergeTemplate(Id templateId, Id recordId, Map<String, String> resolvedImages) {
         pendingImages = new List<Map<String, Object>>();
         imageCounter = 0;
 
@@ -40,6 +46,12 @@ public with sharing class DocGenService {
             dataMap = DocGenController.generateDocumentData(templateId, recordId);
         } catch (Exception e) {
             throw new DocGenException('Error retrieving template data: ' + e.getMessage());
+        }
+
+        // Apply LWC-resolved images: replace Salesforce URLs with data URIs in record data.
+        // This enables DOCX image embedding without server-side HTTP callouts.
+        if (resolvedImages != null && !resolvedImages.isEmpty()) {
+            applyResolvedImages(dataMap.get('data'), resolvedImages);
         }
 
         String base64File = (String) dataMap.get('templateFile');
@@ -150,15 +162,21 @@ public with sharing class DocGenService {
                     // URL-only images are not added to rels (they're for HTML/PDF only, not DOCX)
                 }
             }
-            // Collect image data for HTML rendering path
+            // Collect image data for rendering paths
             for (Map<String, Object> img : pendingImages) {
                 String relId = (String) img.get('relId');
                 if (img.containsKey('blob')) {
+                    // Base64 for DOCX ZIP embedding and fallback
                     Blob imgBlob = (Blob) img.get('blob');
                     mr.imageBase64ByRelId.put(relId, EncodingUtil.base64Encode(imgBlob));
-                } else if (img.containsKey('url')) {
-                    // Store URL directly — Blob.toPdf() (Spring '26) can fetch Salesforce URLs
-                    mr.imageBase64ByRelId.put(relId, (String) img.get('url'));
+                }
+                if (img.containsKey('url')) {
+                    // URL for PDF rendering via Blob.toPdf()
+                    mr.imageUrlByRelId.put(relId, (String) img.get('url'));
+                    // Also store in base64 map so PDF image map loop finds the relId
+                    if (!img.containsKey('blob')) {
+                        mr.imageBase64ByRelId.put(relId, (String) img.get('url'));
+                    }
                 }
             }
         }
@@ -168,6 +186,42 @@ public with sharing class DocGenService {
         if (mr.docTitle == null) mr.docTitle = (String) resolveValue(recordDataMap, 'Name');
 
         return mr;
+    }
+
+    /**
+     * Recursively walks record data and replaces Salesforce image URLs with
+     * base64 data URIs from the LWC-resolved image map. This enables DOCX
+     * image embedding without server-side callouts.
+     */
+    private static void applyResolvedImages(Object data, Map<String, String> resolvedImages) {
+        if (data instanceof Map<String, Object>) {
+            Map<String, Object> mapData = (Map<String, Object>) data;
+            for (String key : new List<String>(mapData.keySet())) {
+                Object val = mapData.get(key);
+                if (val instanceof String) {
+                    String strVal = (String) val;
+                    if (strVal.containsIgnoreCase('<img')) {
+                        for (String originalUrl : resolvedImages.keySet()) {
+                            if (strVal.contains(originalUrl)) {
+                                strVal = strVal.replace(originalUrl, resolvedImages.get(originalUrl));
+                            }
+                            // Also handle &amp; encoded version
+                            String encodedUrl = originalUrl.replace('&', '&amp;');
+                            if (strVal.contains(encodedUrl)) {
+                                strVal = strVal.replace(encodedUrl, resolvedImages.get(originalUrl));
+                            }
+                        }
+                        mapData.put(key, strVal);
+                    }
+                } else {
+                    applyResolvedImages(val, resolvedImages);
+                }
+            }
+        } else if (data instanceof List<Object>) {
+            for (Object item : (List<Object>) data) {
+                applyResolvedImages(item, resolvedImages);
+            }
+        }
     }
 
     /**
@@ -211,7 +265,16 @@ public with sharing class DocGenService {
      * the document Blob, title, output format, and template type. Does NOT save to record.
      */
     public static Map<String, Object> processDocument(Id templateId, Id recordId) {
-        MergeResult mr = mergeTemplate(templateId, recordId);
+        return processDocument(templateId, recordId, null);
+    }
+
+    /**
+     * Processes a template with optional pre-resolved images from the LWC.
+     * The resolvedImages map contains originalUrl → base64DataUri entries
+     * fetched by the browser (which has session access to Salesforce URLs).
+     */
+    public static Map<String, Object> processDocument(Id templateId, Id recordId, Map<String, String> resolvedImages) {
+        MergeResult mr = mergeTemplate(templateId, recordId, resolvedImages);
         Blob resultBlob = assembleZip(mr);
 
         return new Map<String, Object>{
@@ -220,6 +283,103 @@ public with sharing class DocGenService {
             'outputFormat' => mr.outputFormat,
             'templateType' => mr.templateType
         };
+    }
+
+    /**
+     * Extracts images from a template DOCX/PPTX file and saves them as ContentVersion
+     * records linked to the template version. These committed CVs provide stable URLs
+     * for Blob.toPdf() which cannot render data URI images (Flying Saucer limitation).
+     * Each version gets its own set of images — no duplicates or confusion.
+     */
+    public static void extractAndSaveTemplateImages(Id templateId, Id versionId) {
+        String fileContent = DocGenTemplateManager.getTemplateFileContent(templateId);
+        if (fileContent == null) return;
+
+        List<DocGen_Template__c> templates = [
+            SELECT Type__c FROM DocGen_Template__c WHERE Id = :templateId WITH SYSTEM_MODE LIMIT 1
+        ];
+        if (templates.isEmpty()) return;
+        String templateType = templates[0].Type__c;
+
+        Blob templateBlob = EncodingUtil.base64Decode(fileContent);
+        Compression.ZipReader reader = new Compression.ZipReader(templateBlob);
+
+        // Determine paths based on template type
+        String relsPath;
+        String mediaPath;
+        if (templateType == 'PowerPoint') {
+            relsPath = 'ppt/_rels/presentation.xml.rels';
+            mediaPath = 'ppt/media/';
+        } else {
+            relsPath = 'word/_rels/document.xml.rels';
+            mediaPath = 'word/media/';
+        }
+
+        String relsXml = null;
+        Map<String, Blob> mediaEntries = new Map<String, Blob>();
+
+        for (Compression.ZipEntry entry : reader.getEntries()) {
+            String name = entry.getName();
+            if (name == relsPath) {
+                relsXml = reader.extract(name).toString();
+            } else if (name.startsWith(mediaPath)) {
+                mediaEntries.put(name, reader.extract(name));
+            }
+        }
+
+        if (relsXml == null || mediaEntries.isEmpty()) return;
+
+        // Parse rels and save each image as a ContentVersion linked to the version record
+        String prefix = 'docgen_tmpl_img_' + versionId + '_';
+        List<ContentVersion> newCvs = new List<ContentVersion>();
+
+        Integer relCursor = 0;
+        while (relCursor < relsXml.length()) {
+            Integer relStart = relsXml.indexOf('<Relationship ', relCursor);
+            if (relStart == -1) break;
+            Integer relSelfClose = relsXml.indexOf('/>', relStart);
+            Integer relClose = relsXml.indexOf('>', relStart);
+            if (relClose == -1) break;
+            Integer relEnd = (relSelfClose != -1 && relSelfClose < relClose) ? relSelfClose + 2 : relClose + 1;
+
+            String relTag = relsXml.substring(relStart, relEnd);
+            String relType = extractXmlAttrValue(relTag, 'Type');
+            if (relType != null && relType.contains('/image')) {
+                String relId = extractXmlAttrValue(relTag, 'Id');
+                String target = extractXmlAttrValue(relTag, 'Target');
+                if (relId != null && target != null && target.startsWith('media/')) {
+                    String fullPath = mediaPath + target.substringAfter('media/');
+                    Blob imgBlob = mediaEntries.get(fullPath);
+                    if (imgBlob != null) {
+                        String ext = target.substringAfterLast('.');
+                        ContentVersion cv = new ContentVersion();
+                        cv.Title = prefix + relId;
+                        cv.PathOnClient = prefix + relId + '.' + ext;
+                        cv.VersionData = imgBlob;
+                        newCvs.add(cv);
+                    }
+                }
+            }
+            relCursor = relEnd;
+        }
+
+        if (!newCvs.isEmpty()) {
+            insert newCvs;
+            // Link to the version record
+            List<ContentVersion> insertedCvs = [
+                SELECT ContentDocumentId FROM ContentVersion WHERE Id IN :newCvs
+            ];
+            List<ContentDocumentLink> links = new List<ContentDocumentLink>();
+            for (ContentVersion cv : insertedCvs) {
+                links.add(new ContentDocumentLink(
+                    ContentDocumentId = cv.ContentDocumentId,
+                    LinkedEntityId = versionId,
+                    ShareType = 'V',
+                    Visibility = 'AllUsers'
+                ));
+            }
+            insert links;
+        }
     }
 
     /**
@@ -408,25 +568,57 @@ public with sharing class DocGenService {
     }
 
     /**
-     * Legacy single-call PDF generation. Works for templates without images.
-     * For templates with images, use preparePdfImages() + generatePdfFromBatch().
+     * Generates a PDF via Blob.toPdf() with images referenced by URL in the HTML.
+     * Blob.toPdf() fetches images from Salesforce URLs during rendering.
+     * Base64 images (from template media) are converted to data URIs inline.
+     * URL images (from RTF fields) are passed through as absolute URLs.
      */
-    public static Map<String, Object> processDocumentAsPdf(Id templateId, Id recordId) {
+    public static Map<String, Object> generatePdfDirect(Id templateId, Id recordId) {
         MergeResult mr = mergeTemplate(templateId, recordId);
 
         if (mr.templateType == 'PowerPoint') {
             throw new DocGenException('Server-side PDF generation is only supported for Word templates.');
         }
 
+        // Build image map with absolute URLs for Blob.toPdf().
+        // Data URIs don't work (Flying Saucer limitation) — all images must be URLs.
+        Map<String, String> pdfImages = new Map<String, String>();
+        String baseUrl = URL.getOrgDomainUrl().toExternalForm();
+
+        // 1. Template-embedded images: look up committed CVs linked to the active version
+        List<DocGen_Template_Version__c> activeVersions = [
+            SELECT Id FROM DocGen_Template_Version__c
+            WHERE Template__c = :templateId AND Is_Active__c = true
+            WITH SYSTEM_MODE LIMIT 1
+        ];
+        if (!activeVersions.isEmpty()) {
+            String prefix = 'docgen_tmpl_img_' + activeVersions[0].Id + '_';
+            List<ContentVersion> tmplCvs = [
+                SELECT Id, Title FROM ContentVersion
+                WHERE Title LIKE :(prefix + '%')
+                WITH SYSTEM_MODE
+            ];
+            for (ContentVersion cv : tmplCvs) {
+                String relId = cv.Title.substring(prefix.length());
+                pdfImages.put(relId, baseUrl + '/sfc/servlet.shepherd/version/download/' + cv.Id);
+            }
+        }
+
+        // 2. RTF/dynamic images: use absolute Salesforce URLs from imageUrlByRelId
+        for (String relId : mr.imageUrlByRelId.keySet()) {
+            String url = mr.imageUrlByRelId.get(relId);
+            if (!url.startsWithIgnoreCase('http')) {
+                url = baseUrl + url;
+            }
+            pdfImages.put(relId, url);
+        }
+
+        String html = DocGenHtmlRenderer.convertToHtml(mr.documentXml, pdfImages);
         Blob pdfBlob;
         if (Test.isRunningTest()) {
             pdfBlob = Blob.toPdf('<html><body><p>Test PDF</p></body></html>');
         } else {
-            PageReference pdfPage = Page.DocGenPdfRenderer;
-            pdfPage.getParameters().put('mode', 'document');
-            pdfPage.getParameters().put('templateId', templateId);
-            pdfPage.getParameters().put('recordId', recordId);
-            pdfBlob = pdfPage.getContentAsPDF();
+            pdfBlob = Blob.toPdf(html);
         }
 
         return new Map<String, Object>{
@@ -439,51 +631,50 @@ public with sharing class DocGenService {
 
     /**
      * Processes a template and saves the result as a ContentVersion attached to the record.
-     * For PDF output without images, uses Blob.toPdf() directly.
-     * For PDF output with images, saves temp ContentVersion records and enqueues
-     * DocGenPdfQueueable to render the PDF in a separate transaction (required because
-     * Flying Saucer can only fetch images from committed ContentVersion records).
-     * Returns ContentDocumentId, or null if PDF generation is async (images present).
+     * For PDF output, uses Blob.toPdf() with images as absolute URLs or data URIs.
+     * Returns ContentDocumentId.
      */
     public static Id generateDocument(Id templateId, Id recordId) {
         MergeResult mr = mergeTemplate(templateId, recordId);
 
         if (mr.outputFormat == 'PDF' && mr.templateType == 'Word') {
-            // Check if there are base64 images that need temp CVs (vs URL images that Blob.toPdf fetches directly)
-            Boolean hasBase64Images = false;
-            for (String imgValue : mr.imageBase64ByRelId.values()) {
-                if (!imgValue.startsWith('/') && !imgValue.startsWithIgnoreCase('http')) {
-                    hasBase64Images = true;
-                    break;
+            Map<String, String> pdfImages = new Map<String, String>();
+            String baseUrl = URL.getOrgDomainUrl().toExternalForm();
+
+            // Template-embedded images: committed CVs linked to active version
+            List<DocGen_Template_Version__c> activeVersions = [
+                SELECT Id FROM DocGen_Template_Version__c
+                WHERE Template__c = :templateId AND Is_Active__c = true
+                WITH SYSTEM_MODE LIMIT 1
+            ];
+            if (!activeVersions.isEmpty()) {
+                String prefix = 'docgen_tmpl_img_' + activeVersions[0].Id + '_';
+                List<ContentVersion> tmplCvs = [
+                    SELECT Id, Title FROM ContentVersion
+                    WHERE Title LIKE :(prefix + '%')
+                    WITH SYSTEM_MODE
+                ];
+                for (ContentVersion cv : tmplCvs) {
+                    String relId = cv.Title.substring(prefix.length());
+                    pdfImages.put(relId, baseUrl + '/sfc/servlet.shepherd/version/download/' + cv.Id);
                 }
             }
 
-            if (!hasBase64Images) {
-                // No base64 images — only URL images or no images at all.
-                // Blob.toPdf() (Spring '26) can fetch Salesforce URLs directly.
-                String html = DocGenHtmlRenderer.convertToHtml(mr.documentXml, mr.imageBase64ByRelId);
-                Blob pdfBlob;
-                if (Test.isRunningTest()) {
-                    pdfBlob = Blob.toPdf('<html><body><p>Test PDF</p></body></html>');
-                } else {
-                    pdfBlob = Blob.toPdf(html);
-                }
-                return savePdfFile(pdfBlob, mr.docTitle, recordId);
-            } else {
-                // Has base64 images (template-embedded) — save as temp CVs and enqueue
-                // async PDF generation. Blob.toPdf() needs images accessible via URL,
-                // so base64 images are saved as ContentVersions in this transaction and
-                // the PDF is rendered in a separate transaction after they commit.
-                String batchKey = saveTempImageCvs(mr);
-                if (Test.isRunningTest()) {
-                    return savePdfFile(
-                        Blob.toPdf('<html><body><p>Test PDF</p></body></html>'),
-                        mr.docTitle, recordId
-                    );
-                }
-                System.enqueueJob(new DocGenPdfQueueable(templateId, recordId, batchKey, mr.docTitle));
-                return null; // PDF will be saved asynchronously
+            // RTF/dynamic images: absolute Salesforce URLs
+            for (String relId : mr.imageUrlByRelId.keySet()) {
+                String url = mr.imageUrlByRelId.get(relId);
+                if (!url.startsWithIgnoreCase('http')) url = baseUrl + url;
+                pdfImages.put(relId, url);
             }
+
+            String html = DocGenHtmlRenderer.convertToHtml(mr.documentXml, pdfImages);
+            Blob pdfBlob;
+            if (Test.isRunningTest()) {
+                pdfBlob = Blob.toPdf('<html><body><p>Test PDF</p></body></html>');
+            } else {
+                pdfBlob = Blob.toPdf(html);
+            }
+            return savePdfFile(pdfBlob, mr.docTitle, recordId);
         }
 
         // Native DOCX/PPTX path
@@ -1017,49 +1208,42 @@ public with sharing class DocGenService {
             }
         }
 
-        // Fetch image blob using the same logic as buildImageXml
+        // Resolve image: decode data URIs to blobs, store Salesforce URLs for PDF rendering.
+        // No HTTP callouts or session IDs — AppExchange safe.
         Blob imageBlob = null;
         String ext = 'png';
         try {
             if (src.startsWith('data:image/')) {
+                // Data URI — decode to blob (for DOCX embedding)
                 String base64Part = src.substringAfter(',');
                 if (src.containsIgnoreCase('jpeg') || src.containsIgnoreCase('jpg')) ext = 'jpeg';
                 imageBlob = EncodingUtil.base64Decode(base64Part);
-            } else if (src.containsIgnoreCase('servlet/rtaImage')) {
-                imageBlob = fetchViaSessionAuth('/servlet/' + src.substringAfter('/servlet/'));
-            } else if (src.containsIgnoreCase('/servlet/') || src.containsIgnoreCase('/sfc/')) {
-                imageBlob = fetchViaSessionAuth(src.contains('://') ? src.substringAfter('.com') : src);
-            } else if (src.containsIgnoreCase('refid=')) {
-                String refId = src.substringAfterLast('refid=').substringBefore('&');
-                if (String.isBlank(refId)) refId = src.substringAfterLast('refid=');
-                imageBlob = fetchSalesforceImage(refId);
-            } else if (src.startsWith('https://')) {
-                if (src.contains('.salesforce.com') || src.contains('.force.com') || src.contains('.documentforce.com')) {
-                    imageBlob = fetchViaSessionAuth(src.substringAfter('.com'));
-                } else {
-                    imageBlob = fetchDirectUrl(src);
-                }
-                if (src.containsIgnoreCase('.jpg') || src.containsIgnoreCase('.jpeg')) ext = 'jpeg';
             }
+            // For Salesforce URLs (servlet, sfc, https), store URL for PDF rendering.
+            // Blob.toPdf() resolves Salesforce URLs natively via the VF engine.
+            if (src.containsIgnoreCase('.jpg') || src.containsIgnoreCase('.jpeg')) ext = 'jpeg';
         } catch (Exception e) {
-            System.debug(LoggingLevel.ERROR, 'DocGen: Rich text image fetch error: ' + e.getMessage());
+            System.debug(LoggingLevel.ERROR, 'DocGen: Rich text image processing error: ' + e.getMessage());
         }
 
-        // Register image — use blob if available, otherwise fall back to URL.
-        // URL fallback enables Blob.toPdf() (Spring '26) to fetch images directly
-        // from Salesforce servlet/content URLs during PDF rendering.
+        // Register image — store blob for DOCX and URL for PDF rendering.
         imageCounter++;
         String relId = 'rIdImg' + imageCounter;
         String fileName = 'docgen_image_' + imageCounter + '.' + ext;
 
         if (imageBlob != null) {
-            pendingImages.add(new Map<String, Object>{
+            Map<String, Object> imgData = new Map<String, Object>{
                 'relId' => relId,
                 'fileName' => fileName,
                 'blob' => imageBlob
-            });
+            };
+            // Store source URL for PDF rendering (Blob.toPdf fetches images via URL)
+            if (!src.startsWith('data:')) {
+                imgData.put('url', src);
+            }
+            pendingImages.add(imgData);
         } else if (String.isNotBlank(src) && !src.startsWith('data:')) {
-            // Store original URL for PDF rendering (Blob.toPdf can fetch Salesforce URLs)
+            // URL-only: no blob available, store URL for PDF rendering
             pendingImages.add(new Map<String, Object>{
                 'relId' => relId,
                 'fileName' => fileName,
@@ -1131,6 +1315,7 @@ public with sharing class DocGenService {
 
         Blob imageBlob = null;
         String ext = 'png';
+        String cvImageUrl = null;
 
         try {
             // 1. Rich text HTML containing <img> tags
@@ -1147,12 +1332,14 @@ public with sharing class DocGenService {
             else if (fieldValue.length() > 100 && !fieldValue.contains('/') && !fieldValue.contains(' ')) {
                 imageBlob = EncodingUtil.base64Decode(fieldValue);
             }
-            // 4. ContentVersion ID (starts with 068)
+            // 4. ContentVersion ID (starts with 068) — works for both DOCX (blob) and PDF (URL)
             else if (fieldValue.startsWith('068') && fieldValue.length() >= 15) {
-                List<ContentVersion> cvs = [SELECT VersionData, FileExtension FROM ContentVersion WHERE Id = :fieldValue WITH SYSTEM_MODE LIMIT 1];
+                List<ContentVersion> cvs = [SELECT Id, VersionData, FileExtension FROM ContentVersion WHERE Id = :fieldValue WITH SYSTEM_MODE LIMIT 1];
                 if (!cvs.isEmpty()) {
                     imageBlob = cvs[0].VersionData;
                     if (cvs[0].FileExtension != null) ext = cvs[0].FileExtension.toLowerCase();
+                    // Store URL for PDF rendering (committed CV = stable URL)
+                    cvImageUrl = URL.getOrgDomainUrl().toExternalForm() + '/sfc/servlet.shepherd/version/download/' + cvs[0].Id;
                 }
             }
             // 5. Salesforce file URL containing refid (rich text image reference)
@@ -1167,31 +1354,59 @@ public with sharing class DocGenService {
                 if (docId.contains('?')) docId = docId.substringBefore('?');
                 imageBlob = fetchSalesforceImage(docId);
             }
-            // 7. Generic HTTPS URL — attempt to fetch as image (reject plain HTTP)
+            // 7. Generic HTTPS URL — can't fetch without session ID (AppExchange safe).
+            // For {%ImageField} tags, users should use ContentVersion IDs or data URIs.
             else if (fieldValue.startsWith('https://')) {
-                if (fieldValue.contains('.salesforce.com') || fieldValue.contains('.force.com') || fieldValue.contains('.documentforce.com')) {
-                    imageBlob = fetchViaSessionAuth(fieldValue.substringAfter('.com'));
-                } else {
-                    imageBlob = fetchDirectUrl(fieldValue);
-                }
-                if (fieldValue.containsIgnoreCase('.jpg') || fieldValue.containsIgnoreCase('.jpeg')) ext = 'jpeg';
+                System.debug(LoggingLevel.WARN, 'DocGen: External URL images require ContentVersion ID or data URI: ' + fieldValue.left(200));
             }
 
+            // If no blob but we have a URL, store it for PDF rendering
+            // (Blob.toPdf resolves Salesforce URLs natively via the VF engine)
+            String sourceUrl = null;
             if (imageBlob == null) {
-                System.debug(LoggingLevel.WARN, 'DocGen: Could not resolve image from: ' + fieldValue.left(200));
-                return null;
+                // Try to extract a URL from the field value for PDF
+                if (fieldValue.containsIgnoreCase('<img')) {
+                    // HTML with img tag — extract src URL
+                    Integer sIdx = fieldValue.indexOfIgnoreCase('src=');
+                    if (sIdx != -1) {
+                        sIdx += 4;
+                        while (sIdx < fieldValue.length() && fieldValue.substring(sIdx, sIdx + 1) == ' ') sIdx++;
+                        String qc = fieldValue.substring(sIdx, sIdx + 1);
+                        if (qc == '"' || qc == '\'') {
+                            sIdx++;
+                            Integer sEnd = fieldValue.indexOf(qc, sIdx);
+                            if (sEnd != -1) sourceUrl = fieldValue.substring(sIdx, sEnd).replace('&amp;', '&');
+                        }
+                    }
+                } else if (fieldValue.startsWithIgnoreCase('http') || fieldValue.startsWith('/')) {
+                    sourceUrl = fieldValue;
+                }
+
+                if (String.isBlank(sourceUrl) || sourceUrl.startsWith('data:')) {
+                    System.debug(LoggingLevel.WARN, 'DocGen: Could not resolve image from: ' + fieldValue.left(200));
+                    return null;
+                }
             }
 
             imageCounter++;
             String relId = 'rIdImg' + imageCounter;
             String fileName = 'docgen_image_' + imageCounter + '.' + ext;
 
-            // Register image for ZIP injection
-            pendingImages.add(new Map<String, Object>{
+            // Register image — blob for DOCX, URL for PDF
+            Map<String, Object> imgEntry = new Map<String, Object>{
                 'relId' => relId,
-                'fileName' => fileName,
-                'blob' => imageBlob
-            });
+                'fileName' => fileName
+            };
+            if (imageBlob != null) {
+                imgEntry.put('blob', imageBlob);
+            }
+            // Prefer CV URL (committed, works for PDF), fall back to extracted source URL
+            if (cvImageUrl != null) {
+                imgEntry.put('url', cvImageUrl);
+            } else if (sourceUrl != null) {
+                imgEntry.put('url', sourceUrl);
+            }
+            pendingImages.add(imgEntry);
 
             // Use DrawingML format (<w:drawing>) for broad compatibility.
             // VML (<w:pict>) works in Word but docx-preview (used for client-side PDF) cannot render it.
@@ -1263,62 +1478,20 @@ public with sharing class DocGenService {
 
         String src = html.substring(srcIdx, srcEnd).replace('&amp;', '&');
 
-        // Data URI
+        // Data URI — decode to blob
         if (src.startsWith('data:image/')) {
             String base64Part = src.substringAfter(',');
             return EncodingUtil.base64Decode(base64Part);
         }
 
-        // Salesforce rtaImage servlet URL — fetch via session auth
-        if (src.containsIgnoreCase('servlet/rtaImage')) {
-            return fetchViaSessionAuth('/servlet/' + src.substringAfter('/servlet/'));
-        }
-
-        // Other Salesforce servlet/sfc URL
-        if (src.containsIgnoreCase('/servlet/') || src.containsIgnoreCase('/sfc/')) {
-            return fetchViaSessionAuth(src.contains('://') ? src.substringAfter('.com') : src);
-        }
-
-        // Salesforce refid reference (fallback)
-        if (src.containsIgnoreCase('refid=')) {
-            String refId = src.substringAfterLast('refid=').substringBefore('&');
-            if (String.isBlank(refId)) refId = src.substringAfterLast('refid=');
-            return fetchSalesforceImage(refId);
-        }
-
-        // Generic HTTPS URL in <img> tag — fetch directly or via session auth (reject plain HTTP)
-        if (src.startsWith('https://')) {
-            if (src.contains('.salesforce.com') || src.contains('.force.com') || src.contains('.documentforce.com')) {
-                return fetchViaSessionAuth(src.substringAfter('.com'));
-            }
-            return fetchDirectUrl(src);
-        }
-
+        // Salesforce URLs — can't fetch without session ID (AppExchange limitation).
+        // For PDF, Blob.toPdf() resolves these URLs natively via the VF engine.
+        // Return null here; the caller will use the URL path for PDF rendering.
         return null;
     }
 
-    /**
-     * Fetches a resource from the same org using session-based authentication.
-     */
-    private static Blob fetchViaSessionAuth(String path) {
-        try {
-            HttpRequest req = new HttpRequest();
-            String baseUrl = URL.getOrgDomainUrl().toExternalForm();
-            req.setEndpoint(baseUrl + path);
-            req.setMethod('GET');
-            req.setHeader('Authorization', 'Bearer ' + UserInfo.getSessionId());
-            req.setTimeout(15000);
-            Http h = new Http();
-            HttpResponse res = h.send(req);
-            if (res.getStatusCode() == 200) {
-                return res.getBodyAsBlob();
-            }
-            System.debug(LoggingLevel.WARN, 'DocGen: Session auth fetch returned ' + res.getStatusCode() + ' for: ' + path.left(200));
-        } catch (Exception e) {
-            System.debug(LoggingLevel.ERROR, 'DocGen: Failed to fetch image: ' + e.getMessage());
-        }
-        return null;
-    }
+    // No session-based HTTP fetch methods — AppExchange safe.
+    // Blob.toPdf() resolves Salesforce URLs natively via the VF rendering engine.
 
     /**
      * Fetches image blob from a Salesforce file reference (ContentDocument ID or ContentVersion ID).
@@ -1351,27 +1524,6 @@ public with sharing class DocGenService {
         return null;
     }
 
-    /**
-     * Fetches image data from a generic HTTP/HTTPS URL.
-     * Requires a Remote Site Setting for the target domain.
-     */
-    private static Blob fetchDirectUrl(String url) {
-        try {
-            HttpRequest req = new HttpRequest();
-            req.setEndpoint(url);
-            req.setMethod('GET');
-            req.setTimeout(15000);
-            Http h = new Http();
-            HttpResponse res = h.send(req);
-            if (res.getStatusCode() == 200) {
-                return res.getBodyAsBlob();
-            }
-            System.debug(LoggingLevel.WARN, 'DocGen: Direct URL fetch returned ' + res.getStatusCode() + ' for: ' + url.left(200));
-        } catch (Exception e) {
-            System.debug(LoggingLevel.WARN, 'DocGen: Direct URL fetch failed: ' + e.getMessage());
-        }
-        return null;
-    }
 
     private static Id saveFile(Blob fileBlob, String title, Id recordId, String format, String type) {
         ContentVersion cv = new ContentVersion();

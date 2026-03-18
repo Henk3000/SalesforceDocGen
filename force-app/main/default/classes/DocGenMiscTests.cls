@@ -985,7 +985,7 @@ private class DocGenMiscTests {
     }
 
     // =========================================================================
-    // DocGenService — processDocumentAsPdf
+    // DocGenService — generatePdfDirect
     // =========================================================================
 
     @isTest
@@ -1000,7 +1000,7 @@ private class DocGenMiscTests {
         Account acc = [SELECT Id FROM Account LIMIT 1];
 
         Test.startTest();
-        Map<String, Object> result = DocGenService.processDocumentAsPdf(tpl.Id, acc.Id);
+        Map<String, Object> result = DocGenService.generatePdfDirect(tpl.Id, acc.Id);
         Test.stopTest();
 
         System.assertNotEquals(null, result.get('blob'), 'Should return a PDF blob');
@@ -1041,7 +1041,7 @@ private class DocGenMiscTests {
         Test.startTest();
         Boolean caught = false;
         try {
-            DocGenService.processDocumentAsPdf(tpl.Id, acc.Id);
+            DocGenService.generatePdfDirect(tpl.Id, acc.Id);
         } catch (DocGenException e) {
             caught = true;
             System.assert(e.getMessage().contains('only supported for Word'));
@@ -1065,7 +1065,7 @@ private class DocGenMiscTests {
         Account acc = [SELECT Id FROM Account LIMIT 1];
 
         Test.startTest();
-        Map<String, Object> result = DocGenService.processDocumentAsPdf(tpl.Id, acc.Id);
+        Map<String, Object> result = DocGenService.generatePdfDirect(tpl.Id, acc.Id);
         Test.stopTest();
 
         System.assertNotEquals(null, result.get('blob'));
@@ -1092,7 +1092,7 @@ private class DocGenMiscTests {
         createValidDocxFile(docXml);
 
         Test.startTest();
-        Map<String, Object> result = DocGenService.processDocumentAsPdf(tpl.Id, acc.Id);
+        Map<String, Object> result = DocGenService.generatePdfDirect(tpl.Id, acc.Id);
         Test.stopTest();
 
         System.assertNotEquals(null, result.get('blob'));
