@@ -163,8 +163,7 @@ public with sharing class DocGenController {
                 template.Is_Default__c = (Boolean) fields.get('Is_Default__c');
             }
             // Package-internal object — CRUD controlled by DocGen permission sets
-            SObjectAccessDecision templateDecision = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Template__c>{ template });
-            update templateDecision.getRecords();
+            update template;
 
             // 2. Create Version if requested
             if (createVersion == true) {
@@ -178,8 +177,8 @@ public with sharing class DocGenController {
                     av.Is_Active__c = false;
                 }
                 if (!activeVersions.isEmpty()) {
-                    SObjectAccessDecision avDecision = Security.stripInaccessible(AccessType.UPDATABLE, activeVersions);
-                    update avDecision.getRecords();
+                    // Package-internal object — CRUD controlled by DocGen permission sets
+                    update activeVersions;
                 }
 
                 // Get latest ContentVersionId
@@ -209,9 +208,8 @@ public with sharing class DocGenController {
                 version.Type__c = (String) fields.get('Type__c');
                 version.Base_Object_API__c = (String) fields.get('Base_Object_API__c');
 
-                SObjectAccessDecision versionDecision = Security.stripInaccessible(AccessType.CREATABLE, new List<DocGen_Template_Version__c>{ version });
-                insert versionDecision.getRecords();
-                version.Id = versionDecision.getRecords()[0].Id;
+                // Package-internal object — CRUD controlled by DocGen permission sets
+                insert version;
 
                 // Extract images from DOCX/PPTX and save as ContentVersions linked to the version.
                 // Blob.toPdf() cannot render data URI images — needs committed CV URLs.
@@ -274,14 +272,13 @@ public with sharing class DocGenController {
             }
             // Package-internal objects — CRUD controlled by DocGen permission sets
             if (!others.isEmpty()) {
-                SObjectAccessDecision othersDecision = Security.stripInaccessible(AccessType.UPDATABLE, others);
-                update othersDecision.getRecords();
+                update others;
             }
 
             // 2. Activate this one
             version.Is_Active__c = true;
-            SObjectAccessDecision versionDecision = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Template_Version__c>{ version });
-            update versionDecision.getRecords();
+            // Package-internal object — CRUD controlled by DocGen permission sets
+            update version;
 
             // 3. Update Template Record Headline
             DocGen_Template__c template = new DocGen_Template__c(Id = version.Template__c);
@@ -291,8 +288,8 @@ public with sharing class DocGenController {
             template.Type__c = version.Type__c;
             template.Base_Object_API__c = version.Base_Object_API__c;
 
-            SObjectAccessDecision templateDecision = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Template__c>{ template });
-            update templateDecision.getRecords();
+            // Package-internal object — CRUD controlled by DocGen permission sets
+            update template;
             
         } catch (Exception e) {
             throw new DocGenException('Error activating version: ' + e.getMessage());

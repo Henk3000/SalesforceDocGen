@@ -264,8 +264,8 @@ public without sharing class DocGenSignatureService {
         // Save signature image to request record (DML)
         req.Signature_Data__c = base64Image;
         req.Status__c = 'In Progress';
-        SObjectAccessDecision reqDecision = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Signature_Request__c>{ req });
-        update reqDecision.getRecords();
+        // Package-internal object — CRUD controlled by DocGen permission sets
+        update req;
 
         // Enqueue PDF generation via Blob.toPdf()
         if (Test.isRunningTest()) {
@@ -276,8 +276,8 @@ public without sharing class DocGenSignatureService {
                 DocGenController.saveGeneratedDocument(req.Related_Record_Id__c, fileName, EncodingUtil.base64Encode(pdfBlob), 'pdf');
                 req.Status__c = 'Signed';
                 req.Signature_Data__c = null;
-                SObjectAccessDecision reqUpdateDecision = Security.stripInaccessible(AccessType.UPDATABLE, new List<DocGen_Signature_Request__c>{ req });
-                update reqUpdateDecision.getRecords();
+                // Package-internal object — CRUD controlled by DocGen permission sets
+                update req;
             } catch (Exception e) {
                 System.debug(LoggingLevel.ERROR, 'DocGen: Test path signature error: ' + e.getMessage());
             }

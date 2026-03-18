@@ -3,7 +3,7 @@
 **A free, native, production-ready document engine for Salesforce.**
 
 [![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](#quick-install)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Salesforce-00A1E0.svg)](https://www.salesforce.com)
 [![API Version](https://img.shields.io/badge/API-v66.0-orange.svg)](#)
 [![Dependencies](https://img.shields.io/badge/JS%20dependencies-zero-brightgreen.svg)](#)
@@ -432,4 +432,4 @@ Report bugs and feature requests via [GitHub Issues](https://github.com/DaveMoud
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.

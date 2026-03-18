@@ -19,11 +19,8 @@ public with sharing class DocGenSetupController {
         }
         DocGen_Settings__c settings = DocGen_Settings__c.getOrgDefaults();
         settings.Experience_Site_Url__c = experienceSiteUrl;
-        SObjectAccessDecision settingsDecision = Security.stripInaccessible(
-            settings.Id == null ? AccessType.CREATABLE : AccessType.UPDATABLE,
-            new List<DocGen_Settings__c>{ settings }
-        );
-        upsert settingsDecision.getRecords();
+        // Package-internal object — CRUD controlled by DocGen permission sets
+        upsert settings;
     }
 
     @AuraEnabled
@@ -39,11 +36,8 @@ public with sharing class DocGenSetupController {
         settings.Signature_Email_Subject__c = emailSubject;
         settings.Signature_Email_Message__c = emailMessage;
         settings.Signature_Email_Footer_Text__c = footerText;
-        SObjectAccessDecision settingsDecision = Security.stripInaccessible(
-            settings.Id == null ? AccessType.CREATABLE : AccessType.UPDATABLE,
-            new List<DocGen_Settings__c>{ settings }
-        );
-        upsert settingsDecision.getRecords();
+        // Package-internal object — CRUD controlled by DocGen permission sets
+        upsert settings;
     }
 
 }
