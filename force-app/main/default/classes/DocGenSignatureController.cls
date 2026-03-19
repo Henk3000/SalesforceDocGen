@@ -15,6 +15,7 @@ public without sharing class DocGenSignatureController {
         @AuraEnabled public String roleName;
         @AuraEnabled public Integer totalSigners;
         @AuraEnabled public Integer signedCount;
+        @AuraEnabled public Boolean isSignerToken;
     }
 
     public class SaveSignatureResult {
@@ -108,6 +109,7 @@ public without sharing class DocGenSignatureController {
         }
 
         res.isValid = true;
+        res.isSignerToken = true;
         res.signerName = signer.Signer_Name__c;
         res.roleName = signer.Role_Name__c;
 
@@ -156,6 +158,7 @@ public without sharing class DocGenSignatureController {
         }
 
         res.isValid = true;
+        res.isSignerToken = false;
         res.signerName = req.Signer_Name__c;
         res.totalSigners = 1;
         res.signedCount = 0;

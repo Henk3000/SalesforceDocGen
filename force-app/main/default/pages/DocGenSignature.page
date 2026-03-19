@@ -419,7 +419,7 @@
 
             totalSigners = validationResult.totalSigners || 1;
             var signedCount = validationResult.signedCount || 0;
-            isMultiSigner = totalSigners > 1;
+            isMultiSigner = validationResult.isSignerToken === true;
 
             if (isMultiSigner) {
                 var progressEl = document.getElementById('progress-info');

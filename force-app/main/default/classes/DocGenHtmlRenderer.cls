@@ -7,11 +7,24 @@ public with sharing class DocGenHtmlRenderer {
     private static final String HTML_PREFIX =
         '<html><head><style>' +
         '@page { size: letter; margin: 1in; }' +
-        'body { font-family: Arial, sans-serif; font-size: 11pt; line-height: 1.15; }' +
-        'table { border-collapse: collapse; width: 100%; }' +
+        'body { font-family: Arial, sans-serif; font-size: 11pt; line-height: 1.15; color: #000; }' +
+        'h1 { font-size: 20pt; font-weight: bold; margin: 0 0 6pt 0; }' +
+        'h2 { font-size: 16pt; font-weight: bold; margin: 0 0 4pt 0; }' +
+        'h3 { font-size: 14pt; font-weight: bold; margin: 0 0 4pt 0; }' +
+        'h4 { font-size: 12pt; font-weight: bold; margin: 0 0 4pt 0; }' +
+        'h5 { font-size: 11pt; font-weight: bold; margin: 0 0 4pt 0; }' +
+        'h6 { font-size: 10pt; font-weight: bold; margin: 0 0 4pt 0; }' +
+        'h1, h2, h3, h4, h5, h6 { page-break-after: avoid; }' +
+        'table { border-collapse: collapse; width: 100%; page-break-inside: auto; }' +
+        'tr { page-break-inside: avoid; page-break-after: auto; }' +
         'td, th { padding: 4pt; vertical-align: top; }' +
-        'p { margin: 0 0 8pt 0; }' +
+        'p { margin: 0 0 8pt 0; orphans: 2; widows: 2; }' +
         'img { max-width: 100%; }' +
+        'ul, ol { margin: 0 0 8pt 0; padding-left: 36pt; }' +
+        'li { margin: 0 0 2pt 0; }' +
+        'hr { border: none; border-top: 1px solid #000; margin: 6pt 0; }' +
+        'sub { vertical-align: sub; font-size: 0.8em; }' +
+        'sup { vertical-align: super; font-size: 0.8em; }' +
         '</style></head><body>';
 
     private static final String HTML_SUFFIX = '</body></html>';
@@ -20,6 +33,22 @@ public with sharing class DocGenHtmlRenderer {
     private static final Decimal HALF_POINTS_TO_PT = 0.5;     // half-points → pt (÷2)
     private static final Decimal TWIPS_TO_PT = 0.05;           // twips → pt (÷20)
     private static final Decimal EMU_TO_PX = 0.000104987;      // EMU → px (÷9525)
+
+    // Standard Word heading style IDs → HTML heading levels
+    private static final Map<String, Integer> HEADING_STYLE_MAP = new Map<String, Integer>{
+        'Heading1' => 1, 'heading1' => 1, 'Heading 1' => 1,
+        'Heading2' => 2, 'heading2' => 2, 'Heading 2' => 2,
+        'Heading3' => 3, 'heading3' => 3, 'Heading 3' => 3,
+        'Heading4' => 4, 'heading4' => 4, 'Heading 4' => 4,
+        'Heading5' => 5, 'heading5' => 5, 'Heading 5' => 5,
+        'Heading6' => 6, 'heading6' => 6, 'Heading 6' => 6
+    };
+
+    // Word style IDs that imply a list item
+    private static final Set<String> LIST_STYLE_IDS = new Set<String>{
+        'ListParagraph', 'listparagraph', 'ListBullet', 'ListNumber',
+        'List Paragraph', 'List Bullet', 'List Number'
+    };
 
     /**
      * Converts processed DOCX XML content and associated images into an HTML string
@@ -71,24 +100,24 @@ public with sharing class DocGenHtmlRenderer {
 
     /**
      * Processes body-level DOCX XML elements into HTML.
+     * Handles consecutive list paragraphs by wrapping them in <ul>/<ol>.
      */
     private static String processBodyContent(String xml, Map<String, String> images) {
-        String result = '';
+        // First pass: collect all paragraphs and tables in order
+        List<String> elements = new List<String>();
+        List<String> elementTypes = new List<String>(); // 'p' or 'tbl'
         Integer cursor = 0;
 
         while (cursor < xml.length()) {
             Integer nextTag = xml.indexOf('<', cursor);
-            if (nextTag == -1) {
-                break;
-            }
-
-            // Skip text between tags
+            if (nextTag == -1) break;
             cursor = nextTag;
 
             if (xml.substring(cursor).startsWith('<w:tbl')) {
                 Integer tblEnd = findClosingTag(xml, cursor, 'w:tbl');
                 if (tblEnd != -1) {
-                    result += processTable(xml.substring(cursor, tblEnd), images);
+                    elements.add(xml.substring(cursor, tblEnd));
+                    elementTypes.add('tbl');
                     cursor = tblEnd;
                 } else {
                     cursor++;
@@ -96,13 +125,13 @@ public with sharing class DocGenHtmlRenderer {
             } else if (xml.substring(cursor).startsWith('<w:p ') || xml.substring(cursor).startsWith('<w:p>') || xml.substring(cursor).startsWith('<w:p/>')) {
                 Integer pEnd = findClosingTag(xml, cursor, 'w:p');
                 if (pEnd != -1) {
-                    result += processParagraph(xml.substring(cursor, pEnd), images);
+                    elements.add(xml.substring(cursor, pEnd));
+                    elementTypes.add('p');
                     cursor = pEnd;
                 } else {
                     cursor++;
                 }
             } else {
-                // Skip unknown tags
                 Integer tagEnd = xml.indexOf('>', cursor);
                 if (tagEnd != -1) {
                     cursor = tagEnd + 1;
@@ -112,30 +141,170 @@ public with sharing class DocGenHtmlRenderer {
             }
         }
 
+        // Second pass: render elements, grouping consecutive list paragraphs
+        String result = '';
+        Integer i = 0;
+        while (i < elements.size()) {
+            if (elementTypes[i] == 'tbl') {
+                result += processTable(elements[i], images);
+                i++;
+            } else {
+                // Check if this paragraph is a list item
+                ListInfo li = getListInfo(elements[i]);
+                if (li.isList) {
+                    // Collect consecutive list paragraphs
+                    List<String> listItems = new List<String>();
+                    Boolean isNumbered = li.isNumbered;
+                    listItems.add(elements[i]);
+                    Integer j = i + 1;
+                    while (j < elements.size() && elementTypes[j] == 'p') {
+                        ListInfo nextLi = getListInfo(elements[j]);
+                        if (!nextLi.isList) break;
+                        listItems.add(elements[j]);
+                        j++;
+                    }
+                    result += renderList(listItems, isNumbered, images);
+                    i = j;
+                } else {
+                    result += processParagraph(elements[i], images);
+                    i++;
+                }
+            }
+        }
+
         return result;
     }
 
     /**
-     * Processes a <w:p> element into an HTML <p> or <br> tag.
+     * Detects if a paragraph is a list item by checking for w:numPr or list-style pStyle.
+     */
+    private static ListInfo getListInfo(String pXml) {
+        ListInfo li = new ListInfo();
+        li.isList = false;
+        li.isNumbered = false;
+
+        String pPr = extractElement(pXml, 'w:pPr');
+        if (String.isBlank(pPr)) return li;
+
+        // Check for explicit numbering properties
+        if (pPr.contains('<w:numPr')) {
+            li.isList = true;
+            // numId 0 means "no list" in OOXML
+            String numId = extractAttr(pPr, 'w:numId', 'w:val');
+            if (numId == '0') {
+                li.isList = false;
+                return li;
+            }
+            // Heuristic: odd numId = bullet, even = numbered (Word's common pattern)
+            // Also check for ilvl to detect nested lists (not handled as nested HTML for simplicity)
+            if (numId != null && numId.isNumeric()) {
+                Integer nId = Integer.valueOf(numId);
+                li.isNumbered = (Math.mod(nId, 2) == 0);
+            }
+            return li;
+        }
+
+        // Check for list paragraph style
+        String pStyleVal = extractAttr(pPr, 'w:pStyle', 'w:val');
+        if (pStyleVal != null && LIST_STYLE_IDS.contains(pStyleVal)) {
+            li.isList = true;
+            li.isNumbered = pStyleVal.containsIgnoreCase('Number');
+        }
+
+        return li;
+    }
+
+    /**
+     * Renders a group of consecutive list paragraphs as <ul> or <ol>.
+     */
+    private static String renderList(List<String> listItems, Boolean isNumbered, Map<String, String> images) {
+        String tag = isNumbered ? 'ol' : 'ul';
+        String result = '<' + tag + '>';
+        for (String pXml : listItems) {
+            String content = processRuns(pXml, images);
+            if (String.isBlank(content)) content = '&nbsp;';
+
+            // Extract paragraph-level styles for the <li>
+            String pPr = extractElement(pXml, 'w:pPr');
+            String style = '';
+            if (String.isNotBlank(pPr)) {
+                style = parseParagraphStyle(pPr);
+            }
+
+            result += '<li' + (String.isNotBlank(style) ? ' style="' + style + '"' : '') + '>' + content + '</li>';
+        }
+        result += '</' + tag + '>';
+        return result;
+    }
+
+    /**
+     * Processes a <w:p> element into an HTML paragraph, heading, or horizontal rule.
      */
     private static String processParagraph(String pXml, Map<String, String> images) {
         String style = '';
+        Integer headingLevel = 0;
+        Boolean pageBreakBefore = false;
+        Boolean isTitle = false;
 
         // Extract paragraph properties
         String pPr = extractElement(pXml, 'w:pPr');
         if (String.isNotBlank(pPr)) {
             style = parseParagraphStyle(pPr);
+
+            // Check for heading style
+            String pStyleVal = extractAttr(pPr, 'w:pStyle', 'w:val');
+            if (pStyleVal != null) {
+                if (HEADING_STYLE_MAP.containsKey(pStyleVal)) {
+                    headingLevel = HEADING_STYLE_MAP.get(pStyleVal);
+                } else if (pStyleVal == 'Title' || pStyleVal == 'title') {
+                    isTitle = true;
+                } else if (pStyleVal == 'Subtitle' || pStyleVal == 'subtitle') {
+                    // Render subtitle as styled paragraph
+                    style += (String.isNotBlank(style) ? ';' : '') + 'font-size:14pt;color:#595959';
+                }
+            }
+
+            // Check for page break before
+            if (pPr.contains('<w:pageBreakBefore/>') || pPr.contains('<w:pageBreakBefore ')) {
+                pageBreakBefore = true;
+            }
         }
 
         // Process runs
         String content = processRuns(pXml, images);
 
-        // Empty paragraph = line break
-        if (String.isBlank(content)) {
-            return '<p' + (String.isNotBlank(style) ? ' style="' + style + '"' : '') + '>&nbsp;</p>';
+        // Check for page break in runs (w:br w:type="page")
+        if (pXml.contains('w:type="page"') || pXml.contains('w:type=\'page\'')) {
+            pageBreakBefore = true;
         }
 
-        return '<p' + (String.isNotBlank(style) ? ' style="' + style + '"' : '') + '>' + content + '</p>';
+        // Empty paragraph with bottom border = horizontal rule
+        if (String.isBlank(content) && String.isNotBlank(pPr) && pPr.contains('<w:pBdr')) {
+            if (pPr.contains('<w:bottom ')) {
+                return (pageBreakBefore ? '<div style="page-break-before:always"></div>' : '') + '<hr/>';
+            }
+        }
+
+        String pageBreakDiv = pageBreakBefore ? '<div style="page-break-before:always"></div>' : '';
+
+        // Empty paragraph = line break
+        if (String.isBlank(content)) {
+            return pageBreakDiv + '<p' + (String.isNotBlank(style) ? ' style="' + style + '"' : '') + '>&nbsp;</p>';
+        }
+
+        // Heading
+        if (headingLevel > 0) {
+            String tag = 'h' + headingLevel;
+            return pageBreakDiv + '<' + tag + (String.isNotBlank(style) ? ' style="' + style + '"' : '') + '>' + content + '</' + tag + '>';
+        }
+
+        // Title style
+        if (isTitle) {
+            return pageBreakDiv + '<h1 style="font-size:26pt;font-weight:normal' +
+                (String.isNotBlank(style) ? ';' + style : '') + '">' + content + '</h1>';
+        }
+
+        return pageBreakDiv + '<p' + (String.isNotBlank(style) ? ' style="' + style + '"' : '') + '>' + content + '</p>';
     }
 
     /**
@@ -152,7 +321,7 @@ public with sharing class DocGenHtmlRenderer {
             else if (jcVal == 'both' || jcVal == 'distribute') styles.add('text-align:justify');
         }
 
-        // Spacing: <w:spacing w:before="120" w:after="120" w:line="240"/>
+        // Spacing: <w:spacing w:before="120" w:after="120" w:line="240" w:lineRule="auto"/>
         String spacingBefore = extractAttr(pPr, 'w:spacing', 'w:before');
         if (spacingBefore != null && spacingBefore.isNumeric()) {
             styles.add('margin-top:' + twipsToPt(Integer.valueOf(spacingBefore)) + 'pt');
@@ -162,8 +331,25 @@ public with sharing class DocGenHtmlRenderer {
             styles.add('margin-bottom:' + twipsToPt(Integer.valueOf(spacingAfter)) + 'pt');
         }
 
-        // Indent: <w:ind w:left="720" w:right="0" w:firstLine="360"/>
+        // Line spacing: <w:spacing w:line="360" w:lineRule="auto"/>
+        // In "auto" mode: 240 = single, 360 = 1.5, 480 = double
+        // In "exact"/"atLeast" mode: value is in twips
+        String lineSpacing = extractAttr(pPr, 'w:spacing', 'w:line');
+        String lineRule = extractAttr(pPr, 'w:spacing', 'w:lineRule');
+        if (lineSpacing != null && lineSpacing.isNumeric()) {
+            Integer lineVal = Integer.valueOf(lineSpacing);
+            if (lineRule == 'exact' || lineRule == 'atLeast') {
+                styles.add('line-height:' + twipsToPt(lineVal) + 'pt');
+            } else {
+                // "auto" or default — value/240 gives the multiplier
+                Decimal multiplier = lineVal / 240.0;
+                styles.add('line-height:' + multiplier);
+            }
+        }
+
+        // Indent: <w:ind w:left="720" w:right="0" w:firstLine="360" w:hanging="360"/>
         String indLeft = extractAttr(pPr, 'w:ind', 'w:left');
+        String indHanging = extractAttr(pPr, 'w:ind', 'w:hanging');
         if (indLeft != null && indLeft.isNumeric()) {
             styles.add('margin-left:' + twipsToPt(Integer.valueOf(indLeft)) + 'pt');
         }
@@ -175,8 +361,83 @@ public with sharing class DocGenHtmlRenderer {
         if (indFirst != null && indFirst.isNumeric()) {
             styles.add('text-indent:' + twipsToPt(Integer.valueOf(indFirst)) + 'pt');
         }
+        // Hanging indent: negative text-indent
+        if (indHanging != null && indHanging.isNumeric()) {
+            Decimal hangPt = twipsToPt(Integer.valueOf(indHanging));
+            styles.add('text-indent:-' + hangPt + 'pt');
+            // If no explicit left indent, add padding to compensate
+            if (indLeft == null) {
+                styles.add('padding-left:' + hangPt + 'pt');
+            }
+        }
+
+        // Paragraph shading: <w:shd w:val="clear" w:fill="FFFF00"/>
+        String pFill = extractAttr(pPr, 'w:shd', 'w:fill');
+        if (pFill != null && pFill != 'auto') {
+            styles.add('background-color:#' + pFill);
+        }
+
+        // Paragraph borders: <w:pBdr><w:top w:val="single" w:sz="4" w:color="000000"/>...
+        if (pPr.contains('<w:pBdr')) {
+            String pBdr = extractElement(pPr, 'w:pBdr');
+            if (String.isNotBlank(pBdr)) {
+                String topBdr = parseBorderSide(pBdr, 'w:top');
+                String bottomBdr = parseBorderSide(pBdr, 'w:bottom');
+                String leftBdr = parseBorderSide(pBdr, 'w:left');
+                String rightBdr = parseBorderSide(pBdr, 'w:right');
+                if (topBdr != null) styles.add('border-top:' + topBdr);
+                if (bottomBdr != null) styles.add('border-bottom:' + bottomBdr);
+                if (leftBdr != null) styles.add('border-left:' + leftBdr);
+                if (rightBdr != null) styles.add('border-right:' + rightBdr);
+                if (topBdr != null || bottomBdr != null || leftBdr != null || rightBdr != null) {
+                    styles.add('padding:4pt');
+                }
+            }
+        }
+
+        // Keep with next (avoid page break after this paragraph)
+        if (pPr.contains('<w:keepNext/>') || pPr.contains('<w:keepNext ')) {
+            styles.add('page-break-after:avoid');
+        }
+
+        // Keep lines together (avoid page break inside this paragraph)
+        if (pPr.contains('<w:keepLines/>') || pPr.contains('<w:keepLines ')) {
+            styles.add('page-break-inside:avoid');
+        }
 
         return String.join(styles, ';');
+    }
+
+    /**
+     * Parses a single border side element into a CSS border shorthand.
+     * E.g., <w:top w:val="single" w:sz="4" w:color="000000"/> → "1pt solid #000000"
+     */
+    private static String parseBorderSide(String bdrXml, String side) {
+        String val = extractAttr(bdrXml, side, 'w:val');
+        if (val == null || val == 'none' || val == 'nil') return null;
+
+        String sz = extractAttr(bdrXml, side, 'w:sz');
+        String color = extractAttr(bdrXml, side, 'w:color');
+
+        // sz is in 8ths of a point
+        Decimal widthPt = 1;
+        if (sz != null && sz.isNumeric()) {
+            widthPt = Integer.valueOf(sz) / 8.0;
+            if (widthPt < 0.5) widthPt = 0.5;
+        }
+
+        String cssColor = '#000000';
+        if (color != null && color != 'auto') {
+            cssColor = '#' + color;
+        }
+
+        // Map common Word border styles to CSS
+        String cssStyle = 'solid';
+        if (val == 'dashed' || val == 'dashSmallGap') cssStyle = 'dashed';
+        else if (val == 'dotted') cssStyle = 'dotted';
+        else if (val == 'double') cssStyle = 'double';
+
+        return widthPt + 'pt ' + cssStyle + ' ' + cssColor;
     }
 
     /**
@@ -194,6 +455,9 @@ public with sharing class DocGenHtmlRenderer {
             Integer drawingStart = pXml.indexOf('<w:drawing>', cursor);
             Integer drawingStart2 = pXml.indexOf('<w:drawing ', cursor);
 
+            // Also check for hyperlinks
+            Integer hyperlinkStart = pXml.indexOf('<w:hyperlink', cursor);
+
             // Find the earliest element
             Integer nextRun = -1;
             if (runStart != -1 && runStart2 != -1) nextRun = Math.min(runStart, runStart2);
@@ -205,10 +469,21 @@ public with sharing class DocGenHtmlRenderer {
             else if (drawingStart != -1) nextDrawing = drawingStart;
             else if (drawingStart2 != -1) nextDrawing = drawingStart2;
 
-            if (nextRun == -1 && nextDrawing == -1) break;
+            // Find earliest of run, drawing, hyperlink
+            Integer nextElement = -1;
+            String elementType = '';
 
-            // Process whichever comes first
-            if (nextRun != -1 && (nextDrawing == -1 || nextRun < nextDrawing)) {
+            if (nextRun != -1) { nextElement = nextRun; elementType = 'run'; }
+            if (nextDrawing != -1 && (nextElement == -1 || nextDrawing < nextElement)) {
+                nextElement = nextDrawing; elementType = 'drawing';
+            }
+            if (hyperlinkStart != -1 && (nextElement == -1 || hyperlinkStart < nextElement)) {
+                nextElement = hyperlinkStart; elementType = 'hyperlink';
+            }
+
+            if (nextElement == -1) break;
+
+            if (elementType == 'run') {
                 Integer runEnd = findClosingTag(pXml, nextRun, 'w:r');
                 if (runEnd != -1) {
                     result += processRun(pXml.substring(nextRun, runEnd), images);
@@ -216,13 +491,21 @@ public with sharing class DocGenHtmlRenderer {
                 } else {
                     cursor = nextRun + 1;
                 }
-            } else if (nextDrawing != -1) {
+            } else if (elementType == 'drawing') {
                 Integer drawEnd = findClosingTag(pXml, nextDrawing, 'w:drawing');
                 if (drawEnd != -1) {
                     result += processDrawing(pXml.substring(nextDrawing, drawEnd), images);
                     cursor = drawEnd;
                 } else {
                     cursor = nextDrawing + 1;
+                }
+            } else if (elementType == 'hyperlink') {
+                Integer hlEnd = findClosingTag(pXml, hyperlinkStart, 'w:hyperlink');
+                if (hlEnd != -1) {
+                    result += processHyperlink(pXml.substring(hyperlinkStart, hlEnd), images);
+                    cursor = hlEnd;
+                } else {
+                    cursor = hyperlinkStart + 1;
                 }
             }
         }
@@ -231,12 +514,75 @@ public with sharing class DocGenHtmlRenderer {
     }
 
     /**
+     * Processes a <w:hyperlink> element — extracts inner runs and wraps in <a> if possible.
+     */
+    private static String processHyperlink(String hlXml, Map<String, String> images) {
+        // Hyperlinks may have an anchor (bookmark) or r:id (external link).
+        // We can't resolve r:id without the .rels file, so render the text with underline styling.
+        String innerContent = '';
+        Integer cursor = 0;
+        while (cursor < hlXml.length()) {
+            Integer runStart = hlXml.indexOf('<w:r>', cursor);
+            Integer runStart2 = hlXml.indexOf('<w:r ', cursor);
+            Integer nextRun = -1;
+            if (runStart != -1 && runStart2 != -1) nextRun = Math.min(runStart, runStart2);
+            else if (runStart != -1) nextRun = runStart;
+            else if (runStart2 != -1) nextRun = runStart2;
+            if (nextRun == -1) break;
+
+            Integer runEnd = findClosingTag(hlXml, nextRun, 'w:r');
+            if (runEnd != -1) {
+                innerContent += processRun(hlXml.substring(nextRun, runEnd), images);
+                cursor = runEnd;
+            } else {
+                cursor = nextRun + 1;
+            }
+        }
+
+        if (String.isBlank(innerContent)) return '';
+
+        // Wrap in styled span to indicate link (blue + underline)
+        return '<span style="color:#0563C1;text-decoration:underline">' + innerContent + '</span>';
+    }
+
+    /**
      * Processes a single <w:r> (run) element into an HTML <span>.
      */
     private static String processRun(String rXml, Map<String, String> images) {
-        // Check for break
-        if (rXml.contains('<w:br')) {
+        // Check for page break: <w:br w:type="page"/>
+        if (rXml.contains('<w:br') && rXml.contains('w:type="page"')) {
+            return '<div style="page-break-before:always"></div>';
+        }
+
+        // Check for column break
+        if (rXml.contains('<w:br') && rXml.contains('w:type="column"')) {
             return '<br/>';
+        }
+
+        // Check for regular break
+        if (rXml.contains('<w:br')) {
+            // Only treat as line break if it's not a page/column break
+            if (!rXml.contains('w:type=')) {
+                return '<br/>';
+            }
+        }
+
+        // Check for tab character
+        if (rXml.contains('<w:tab/>') || rXml.contains('<w:tab ')) {
+            // Render tabs as fixed-width space
+            String tabResult = '<span style="display:inline-block;width:36pt"></span>';
+            // Also process any text in the same run
+            String text = extractTextContent(rXml);
+            if (String.isNotBlank(text)) {
+                String rPr = extractElement(rXml, 'w:rPr');
+                if (String.isNotBlank(rPr)) {
+                    String style = parseRunStyle(rPr);
+                    tabResult += '<span style="' + style + '">' + text.escapeHtml4() + '</span>';
+                } else {
+                    tabResult += text.escapeHtml4();
+                }
+            }
+            return tabResult;
         }
 
         // Check for drawing (image)
@@ -282,6 +628,24 @@ public with sharing class DocGenHtmlRenderer {
             openTags += '<s>';
             closeTags = '</s>' + closeTags;
         }
+        // Superscript / Subscript
+        String vertAlign = extractAttr(rPr, 'w:vertAlign', 'w:val');
+        if (vertAlign == 'superscript') {
+            openTags += '<sup>';
+            closeTags = '</sup>' + closeTags;
+        } else if (vertAlign == 'subscript') {
+            openTags += '<sub>';
+            closeTags = '</sub>' + closeTags;
+        }
+        // All caps
+        if (rPr.contains('<w:caps/>') || rPr.contains('<w:caps ')) {
+            text = text.toUpperCase();
+        }
+        // Small caps — approximate with uppercase + smaller font
+        if (rPr.contains('<w:smallCaps/>') || rPr.contains('<w:smallCaps ')) {
+            text = text.toUpperCase();
+            style += (String.isNotBlank(style) ? ';' : '') + 'font-variant:small-caps';
+        }
 
         if (String.isNotBlank(style)) {
             return '<span style="' + style + '">' + openTags + text.escapeHtml4() + closeTags + '</span>';
@@ -321,6 +685,21 @@ public with sharing class DocGenHtmlRenderer {
             styles.add('background-color:' + highlight);
         }
 
+        // Shading (different from highlight): <w:shd w:val="clear" w:fill="FFFF00"/>
+        String shdFill = extractAttr(rPr, 'w:shd', 'w:fill');
+        if (shdFill != null && shdFill != 'auto' && highlight == null) {
+            styles.add('background-color:#' + shdFill);
+        }
+
+        // Letter spacing: <w:spacing w:val="20"/> (in twips)
+        String letterSpacing = extractAttr(rPr, 'w:spacing', 'w:val');
+        if (letterSpacing != null && letterSpacing.isNumeric()) {
+            Integer lsVal = Integer.valueOf(letterSpacing);
+            if (lsVal != 0) {
+                styles.add('letter-spacing:' + twipsToPt(lsVal) + 'pt');
+            }
+        }
+
         return String.join(styles, ';');
     }
 
@@ -329,6 +708,7 @@ public with sharing class DocGenHtmlRenderer {
      */
     private static String processTable(String tblXml, Map<String, String> images) {
         String tableStyle = 'border-collapse:collapse;width:100%';
+        Boolean hasBorders = false;
 
         // Parse table properties
         String tblPr = extractElement(tblXml, 'w:tblPr');
@@ -343,7 +723,28 @@ public with sharing class DocGenHtmlRenderer {
 
             // Table borders
             if (tblPr.contains('<w:tblBorders')) {
+                hasBorders = true;
                 tableStyle += ';border:1px solid #000';
+            }
+
+            // Table alignment
+            String tblJc = extractAttr(tblPr, 'w:jc', 'w:val');
+            if (tblJc == 'center') {
+                tableStyle += ';margin-left:auto;margin-right:auto';
+            } else if (tblJc == 'right' || tblJc == 'end') {
+                tableStyle += ';margin-left:auto';
+            }
+
+            // Table cell margins (default padding for all cells)
+            String tblCellMar = extractElement(tblPr, 'w:tblCellMar');
+            if (String.isNotBlank(tblCellMar)) {
+                String topMar = extractAttr(tblCellMar, 'w:top', 'w:w');
+                String bottomMar = extractAttr(tblCellMar, 'w:bottom', 'w:w');
+                String leftMar = extractAttr(tblCellMar, 'w:left', 'w:w');
+                if (leftMar == null) leftMar = extractAttr(tblCellMar, 'w:start', 'w:w');
+                String rightMar = extractAttr(tblCellMar, 'w:right', 'w:w');
+                if (rightMar == null) rightMar = extractAttr(tblCellMar, 'w:end', 'w:w');
+                // These values will be used on cells; for now they affect the table-level default
             }
         }
 
@@ -357,7 +758,7 @@ public with sharing class DocGenHtmlRenderer {
             Integer trEnd = findClosingTag(tblXml, trStart, 'w:tr');
             if (trEnd == -1) break;
 
-            rows += processTableRow(tblXml.substring(trStart, trEnd), images, tblPr);
+            rows += processTableRow(tblXml.substring(trStart, trEnd), images, tblPr, hasBorders);
             cursor = trEnd;
         }
 
@@ -367,9 +768,13 @@ public with sharing class DocGenHtmlRenderer {
     /**
      * Processes a <w:tr> element into an HTML <tr>.
      */
-    private static String processTableRow(String trXml, Map<String, String> images, String tblPr) {
+    private static String processTableRow(String trXml, Map<String, String> images, String tblPr, Boolean hasBorders) {
         String cells = '';
         Integer cursor = 0;
+
+        // Check for header row
+        String trPr = extractElement(trXml, 'w:trPr');
+        Boolean isHeader = (String.isNotBlank(trPr) && (trPr.contains('<w:tblHeader/>') || trPr.contains('<w:tblHeader ')));
 
         while (cursor < trXml.length()) {
             Integer tcStart = trXml.indexOf('<w:tc', cursor);
@@ -378,7 +783,7 @@ public with sharing class DocGenHtmlRenderer {
             Integer tcEnd = findClosingTag(trXml, tcStart, 'w:tc');
             if (tcEnd == -1) break;
 
-            cells += processTableCell(trXml.substring(tcStart, tcEnd), images, tblPr);
+            cells += processTableCell(trXml.substring(tcStart, tcEnd), images, tblPr, hasBorders, isHeader);
             cursor = tcEnd;
         }
 
@@ -386,10 +791,11 @@ public with sharing class DocGenHtmlRenderer {
     }
 
     /**
-     * Processes a <w:tc> element into an HTML <td>.
+     * Processes a <w:tc> element into an HTML <td> or <th>.
      */
-    private static String processTableCell(String tcXml, Map<String, String> images, String tblPr) {
+    private static String processTableCell(String tcXml, Map<String, String> images, String tblPr, Boolean hasBorders, Boolean isHeader) {
         List<String> styles = new List<String>();
+        Integer colspan = 0;
 
         // Cell properties
         String tcPr = extractElement(tcXml, 'w:tcPr');
@@ -418,10 +824,53 @@ public with sharing class DocGenHtmlRenderer {
             if (vAlign != null) {
                 styles.add('vertical-align:' + vAlign);
             }
-        }
 
-        // Add border if table has borders
-        if (String.isNotBlank(tblPr) && tblPr.contains('<w:tblBorders')) {
+            // Cell-specific borders: <w:tcBorders>
+            if (tcPr.contains('<w:tcBorders')) {
+                String tcBdr = extractElement(tcPr, 'w:tcBorders');
+                if (String.isNotBlank(tcBdr)) {
+                    String topBdr = parseBorderSide(tcBdr, 'w:top');
+                    String bottomBdr = parseBorderSide(tcBdr, 'w:bottom');
+                    String leftBdr = parseBorderSide(tcBdr, 'w:left');
+                    if (leftBdr == null) leftBdr = parseBorderSide(tcBdr, 'w:start');
+                    String rightBdr = parseBorderSide(tcBdr, 'w:right');
+                    if (rightBdr == null) rightBdr = parseBorderSide(tcBdr, 'w:end');
+                    if (topBdr != null) styles.add('border-top:' + topBdr);
+                    if (bottomBdr != null) styles.add('border-bottom:' + bottomBdr);
+                    if (leftBdr != null) styles.add('border-left:' + leftBdr);
+                    if (rightBdr != null) styles.add('border-right:' + rightBdr);
+                }
+            } else if (hasBorders) {
+                // Fall back to table-level borders
+                styles.add('border:1px solid #000');
+            }
+
+            // Column span: <w:gridSpan w:val="2"/>
+            String gridSpan = extractAttr(tcPr, 'w:gridSpan', 'w:val');
+            if (gridSpan != null && gridSpan.isNumeric()) {
+                colspan = Integer.valueOf(gridSpan);
+            }
+
+            // Cell padding: <w:tcMar>
+            if (tcPr.contains('<w:tcMar')) {
+                String tcMar = extractElement(tcPr, 'w:tcMar');
+                if (String.isNotBlank(tcMar)) {
+                    String cellPadTop = extractAttr(tcMar, 'w:top', 'w:w');
+                    String cellPadBottom = extractAttr(tcMar, 'w:bottom', 'w:w');
+                    String cellPadLeft = extractAttr(tcMar, 'w:left', 'w:w');
+                    if (cellPadLeft == null) cellPadLeft = extractAttr(tcMar, 'w:start', 'w:w');
+                    String cellPadRight = extractAttr(tcMar, 'w:right', 'w:w');
+                    if (cellPadRight == null) cellPadRight = extractAttr(tcMar, 'w:end', 'w:w');
+
+                    List<String> padParts = new List<String>();
+                    padParts.add((cellPadTop != null && cellPadTop.isNumeric()) ? twipsToPt(Integer.valueOf(cellPadTop)) + 'pt' : '4pt');
+                    padParts.add((cellPadRight != null && cellPadRight.isNumeric()) ? twipsToPt(Integer.valueOf(cellPadRight)) + 'pt' : '4pt');
+                    padParts.add((cellPadBottom != null && cellPadBottom.isNumeric()) ? twipsToPt(Integer.valueOf(cellPadBottom)) + 'pt' : '4pt');
+                    padParts.add((cellPadLeft != null && cellPadLeft.isNumeric()) ? twipsToPt(Integer.valueOf(cellPadLeft)) + 'pt' : '4pt');
+                    styles.add('padding:' + String.join(padParts, ' '));
+                }
+            }
+        } else if (hasBorders) {
             styles.add('border:1px solid #000');
         }
 
@@ -429,7 +878,12 @@ public with sharing class DocGenHtmlRenderer {
         String content = processBodyContent(tcXml, images);
 
         String styleStr = String.join(styles, ';');
-        return '<td' + (String.isNotBlank(styleStr) ? ' style="' + styleStr + '"' : '') + '>' + content + '</td>';
+        String tag = isHeader ? 'th' : 'td';
+        String attrs = '';
+        if (String.isNotBlank(styleStr)) attrs += ' style="' + styleStr + '"';
+        if (colspan > 1) attrs += ' colspan="' + colspan + '"';
+
+        return '<' + tag + attrs + '>' + content + '</' + tag + '>';
     }
 
     /**
@@ -598,5 +1052,11 @@ public with sharing class DocGenHtmlRenderer {
      */
     private static Decimal twipsToPt(Integer twips) {
         return twips * TWIPS_TO_PT;
+    }
+
+    // Inner class for list detection
+    private class ListInfo {
+        Boolean isList;
+        Boolean isNumbered;
     }
 }

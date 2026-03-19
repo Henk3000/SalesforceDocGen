@@ -798,8 +798,13 @@ public with sharing class DocGenService {
                 break;
             }
             
-            String rawTag = xml.substring(cursor + 1, tagClose); 
+            String rawTag = xml.substring(cursor + 1, tagClose);
             String tagContent = rawTag.trim();
+
+            // Strip Salesforce-style {!Field} prefix — treat {!X} the same as {X}
+            if (tagContent.startsWith('!')) {
+                tagContent = tagContent.substring(1).trim();
+            }
             
             if (tagContent.startsWith('#')) {
                 String key = tagContent.substring(1).trim();
@@ -1001,8 +1006,9 @@ public with sharing class DocGenService {
         if (data == null) return null;
         List<String> parts = path.split('\\.');
         Object current = data;
-        
-        for (String part : parts) {
+
+        for (Integer i = 0; i < parts.size(); i++) {
+            String part = parts[i];
             if (current instanceof Map<String, Object>) {
                 Map<String, Object> currentMap = (Map<String, Object>) current;
                 if (currentMap.containsKey(part)) {
@@ -1018,6 +1024,11 @@ public with sharing class DocGenService {
                         }
                     }
                     if (!found) {
+                        // If first segment doesn't match, it may be the base object name
+                        // (e.g., "Contact" in {!Contact.FirstName}). Skip it and continue.
+                        if (i == 0 && parts.size() > 1) {
+                            continue;
+                        }
                         return null;
                     }
                 }

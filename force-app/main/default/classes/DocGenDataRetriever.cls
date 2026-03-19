@@ -40,12 +40,21 @@ public with sharing class DocGenDataRetriever {
         List<String> queryParts = new List<String>();
         String currentPart = '';
         Integer parenLevel = 0;
-        
+
         for (Integer i = 0; i < fieldsConfig.length(); i++) {
             String charAt = fieldsConfig.substring(i, i+1);
+
+            // Handle opening paren: if we're at level 0 and currentPart has content,
+            // this is a subquery starting after a field (e.g., "Account.Name (SELECT...").
+            // Split them: emit the field, then start the subquery.
+            if (charAt == '(' && parenLevel == 0 && String.isNotBlank(currentPart.trim())) {
+                queryParts.add(currentPart.trim());
+                currentPart = '';
+            }
+
             if (charAt == '(') parenLevel++;
             if (charAt == ')') parenLevel--;
-            
+
             if (charAt == ',' && parenLevel == 0) {
                 queryParts.add(currentPart.trim());
                 currentPart = '';
