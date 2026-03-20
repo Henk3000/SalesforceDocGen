@@ -792,19 +792,18 @@ public without sharing class DocGenSignatureController {
 
         String html = DocGenHtmlRenderer.convertToHtml(documentXml, imageBase64Map);
 
-        // Try Blob.toPdf() first (Spring '26 orgs with Release Update).
+        // Try Blob.toPdf() with full HTML (Spring '26 orgs with Release Update).
+        // If it fails (pre-Spring '26), strip images and render text-only PDF.
+        // VF page fallback is not available here — the Automated Process user
+        // (platform event context) cannot access VF pages.
         try {
             return Blob.toPdf(html);
         } catch (Exception e) {
-            System.debug(LoggingLevel.INFO, 'DocGen: Blob.toPdf() failed for signature PDF, using VF fallback: ' + e.getMessage());
+            System.debug(LoggingLevel.INFO, 'DocGen: Blob.toPdf() with images failed, rendering text-only: ' + e.getMessage());
         }
 
-        // Fallback: VF page renderAs="pdf" — requires DocGenPdfRenderer page access
-        // for the Automated Process user (granted via DocGen_Admin permission set).
-        PageReference pdfPage = Page.DocGenPdfRenderer;
-        pdfPage.getParameters().put('mode', 'signature');
-        pdfPage.getParameters().put('requestId', String.valueOf(requestId));
-        return pdfPage.getContentAsPDF();
+        String textOnlyHtml = html.replaceAll('<img[^>]*/?>', '');
+        return Blob.toPdf(textOnlyHtml);
     }
 
     /**
