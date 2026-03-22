@@ -67,8 +67,8 @@ export default class DocGenColumnBuilder extends LightningElement {
 
     get filteredObjectOptions() {
         const term = (this.objectSearchTerm || '').toLowerCase();
-        if (term.length < 2) return []; // Don't show until at least 2 chars typed
-        return this.objectOptions.filter(o => o.label.toLowerCase().includes(term)).slice(0, 20);
+        if (term.length < 1) return [];
+        return this.objectOptions.filter(o => o.label.toLowerCase().includes(term)).slice(0, 15);
     }
 
     get filteredAddOptions() {
@@ -207,12 +207,11 @@ export default class DocGenColumnBuilder extends LightningElement {
 
     // === OBJECT SELECTION ===
     handleObjectSearch(event) {
-        this.objectSearchTerm = event.target.value;
-        this.showObjectPicker = this.objectSearchTerm.length >= 2;
+        this.objectSearchTerm = event.detail.value || event.target.value || '';
+        this.showObjectPicker = this.objectSearchTerm.length >= 1;
     }
     handleObjectFocus() {
-        // Only show if we already have search results
-        if (this.objectSearchTerm.length >= 2) this.showObjectPicker = true;
+        if (this.objectSearchTerm.length >= 1) this.showObjectPicker = true;
     }
     handleObjectSelect(event) {
         const value = event.currentTarget.dataset.value;
@@ -341,6 +340,53 @@ export default class DocGenColumnBuilder extends LightningElement {
             message: this.parentPickerSelectedFields.length + ' fields from ' + this.parentPickerRelName + ' added.',
             variant: 'success'
         }));
+    }
+
+    handleRemoveParentField(event) {
+        const relName = event.currentTarget.dataset.rel;
+        const fieldName = event.currentTarget.dataset.field;
+        const node = this.activeNode;
+        if (!node || !node.parentGroups) return;
+
+        const group = node.parentGroups.find(g => g.relationshipName === relName);
+        if (group) {
+            group.fields = group.fields.filter(f => f !== fieldName);
+            // Remove the group entirely if no fields left
+            if (group.fields.length === 0) {
+                node.parentGroups = node.parentGroups.filter(g => g.relationshipName !== relName);
+            }
+            this.treeNodes = [...this.treeNodes];
+            this._notifyChange();
+        }
+    }
+
+    handleEditParentGroup(event) {
+        const relName = event.currentTarget.dataset.rel;
+        const node = this.activeNode;
+        if (!node) return;
+
+        // Find the target object for this relationship
+        getParentRelationships({ objectName: node.objectApiName })
+            .then(data => {
+                const rel = data.find(r => r.value === relName);
+                if (rel) {
+                    this.parentPickerRelName = relName;
+                    this.parentPickerTargetObject = rel.targetObject;
+                    this.parentPickerFieldSearch = '';
+
+                    // Pre-select currently chosen fields
+                    const group = node.parentGroups.find(g => g.relationshipName === relName);
+                    this.parentPickerSelectedFields = group ? [...group.fields] : [];
+
+                    getObjectFields({ objectName: rel.targetObject })
+                        .then(fieldData => {
+                            this.parentPickerFieldOptions = fieldData;
+                            this.parentPickerRelOptions = data;
+                            this.parentPickerRelSelected = true;
+                            this.showParentFieldPicker = true;
+                        });
+                }
+            });
     }
 
     handleChangeRoot() {
