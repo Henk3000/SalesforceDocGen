@@ -389,6 +389,15 @@ export default class DocGenColumnBuilder extends LightningElement {
             });
     }
 
+    handleCopyTag(event) {
+        const tag = event.currentTarget.dataset.copy;
+        if (tag && navigator.clipboard) {
+            navigator.clipboard.writeText(tag).then(() => {
+                this.dispatchEvent(new ShowToastEvent({ title: 'Copied', message: tag, variant: 'success' }));
+            });
+        }
+    }
+
     handleChangeRoot() {
         // Reset everything — go back to object selector
         this.treeNodes = [];

@@ -702,8 +702,11 @@ public with sharing class DocGenController {
             'OpportunityContactProduct' => 'Contact,OpportunityLineItem',
             'OpportunityContact' => 'Contact',
             'OpportunityProduct' => 'OpportunityLineItem',
+            'OpportunityLead' => 'Lead',
             'AccountContact' => 'Contact',
-            'CaseContact' => 'Contact'
+            'AccountCase' => 'Case',
+            'CaseContact' => 'Contact',
+            'CampaignMember' => 'Contact,Lead'
         };
 
         if (reportTypeChildObjects.containsKey(reportTypeName)) {
@@ -1089,6 +1092,26 @@ public with sharing class DocGenController {
         if (Schema.getGlobalDescribe().containsKey(reportTypeName + '__c')) {
             return reportTypeName + '__c';
         }
+
+        // Smart parsing: compound report types like OpportunityLead, AccountCase, etc.
+        // Try matching the longest standard object name as a prefix
+        List<String> standardObjects = new List<String>{
+            'Opportunity', 'Account', 'Contact', 'Lead', 'Case', 'Campaign',
+            'Contract', 'Order', 'Product', 'Task', 'Event', 'User', 'Solution'
+        };
+        // Sort by length descending so "Opportunity" matches before "Case" in "OpportunityCaseContact"
+        // (Already in roughly right order)
+        for (String objName : standardObjects) {
+            if (reportTypeName.startsWith(objName)) {
+                // Verify it exists in Schema
+                if (Schema.getGlobalDescribe().containsKey(objName)) {
+                    return objName;
+                }
+            }
+        }
+
+        // Last resort: try the report type label — "Opportunities with Leads" → "Opportunity"
+        // (Would need the label passed in, skip for now)
 
         return null;
     }

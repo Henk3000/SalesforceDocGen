@@ -188,10 +188,10 @@
                 <!-- Merge Tags Preview -->
                 <template if:true={activeNodeTags}>
                     <div style="border-top: 1px solid #e5e5e5; padding-top: 0.75rem; margin-top: 0.75rem;">
-                        <p style="font-size: 0.75rem; font-weight: 600; color: #706e6b; margin-bottom: 0.5rem;">Tags for your Word template</p>
+                        <p style="font-size: 0.75rem; font-weight: 600; color: #706e6b; margin-bottom: 0.5rem;">Tags for your Word template <span style="font-weight: 400;">(click to copy)</span></p>
                         <div style="display: flex; flex-wrap: wrap; gap: 4px;">
                             <template for:each={activeNodeTags} for:item="tag">
-                                <code key={tag.code} style="font-size: 0.75rem; background: #f3f2f2; padding: 2px 8px; border-radius: 4px; color: #0176d3; cursor: pointer;">{tag.code}</code>
+                                <code key={tag.code} style="font-size: 0.75rem; background: #f3f2f2; padding: 2px 8px; border-radius: 4px; color: #0176d3; cursor: pointer;" data-copy={tag.code} onclick={handleCopyTag}>{tag.code}</code>
                             </template>
                         </div>
                     </div>
