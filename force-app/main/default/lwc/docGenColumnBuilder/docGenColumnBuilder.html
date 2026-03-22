@@ -1,0 +1,219 @@
+<template>
+
+    <!-- ==================== OBJECT SELECTOR (first-time) ==================== -->
+    <template if:true={showObjectSelector}>
+        <div class="slds-box slds-theme_default slds-var-p-around_medium" style="border-radius: 8px;">
+            <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-var-m-bottom_small">
+                <div>
+                    <h3 class="slds-text-heading_small" style="font-weight: 700; margin: 0;">What kind of record is this document for?</h3>
+                    <p class="slds-text-body_small slds-text-color_weak slds-var-m-top_xx-small">For example, pick "Account" for a company overview, "Opportunity" for a proposal, or "Contact" for a letter.</p>
+                </div>
+                <lightning-button label="Import from Report" variant="neutral" icon-name="utility:upload" onclick={handleOpenReportImport}></lightning-button>
+            </div>
+            <div class="slds-form-element" style="position: relative;">
+                <lightning-input type="search" label="Search for an object" placeholder="Type to search... (Account, Contact, Opportunity)" value={objectSearchTerm} oninput={handleObjectSearch} onfocus={handleObjectFocus}></lightning-input>
+                <template if:true={showObjectPicker}>
+                    <div class="slds-dropdown slds-dropdown_length-7 slds-dropdown_fluid" style="position: absolute; z-index: 100;">
+                        <ul class="slds-listbox slds-listbox_vertical">
+                            <template for:each={filteredObjectOptions} for:item="opt">
+                                <li key={opt.value} class="slds-listbox__item">
+                                    <div class="slds-media slds-listbox__option slds-listbox__option_plain slds-media_small"
+                                         data-value={opt.value} data-label={opt.label} onclick={handleObjectSelect}>
+                                        <span class="slds-truncate">{opt.label}</span>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </template>
+
+    <!-- ==================== COLUMN BUILDER ==================== -->
+    <template if:true={hasColumns}>
+
+        <!-- Header bar -->
+        <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-var-m-bottom_small">
+            <div>
+                <h3 class="slds-text-heading_small" style="font-weight: 700; margin: 0;">Choose the fields for your document</h3>
+                <p class="slds-text-body_small slds-text-color_weak">Check the fields you want. Each column is a different set of records.</p>
+            </div>
+            <lightning-button label="Import from Report" variant="neutral" icon-name="utility:upload" onclick={handleOpenReportImport}></lightning-button>
+        </div>
+
+        <!-- Columns -->
+        <div class="columns-container">
+            <template for:each={objectColumns} for:item="col">
+                <div key={col.id} class="object-column">
+
+                    <!-- Column Header -->
+                    <div class="column-header">
+                        <span class={col.badgeClass}>{col.badgeLabel}</span>
+                        <h3>{col.label}</h3>
+                        <template if:true={col.isNotBase}>
+                            <lightning-button-icon icon-name="utility:close" variant="bare" size="small" alternative-text="Remove" data-col-id={col.id} onclick={handleRemoveColumn}></lightning-button-icon>
+                        </template>
+                    </div>
+
+                    <!-- Column Body -->
+                    <div class="column-body">
+                        <!-- Field search -->
+                        <lightning-input type="search" variant="label-hidden" placeholder="Search fields..." data-col-id={col.id} onchange={handleFieldSearch} class="slds-var-m-bottom_x-small"></lightning-input>
+
+                        <!-- Select All -->
+                        <div class="slds-grid slds-grid_align-spread slds-var-m-bottom_x-small">
+                            <span class="slds-text-body_small slds-text-color_weak">{col.selectedFields.length} selected</span>
+                            <lightning-button label="Select All" variant="base" size="small" data-col-id={col.id} onclick={handleSelectAll}></lightning-button>
+                        </div>
+
+                        <!-- Field checkboxes -->
+                        <div class="field-list">
+                            <lightning-checkbox-group
+                                name={col.id}
+                                label="Fields"
+                                variant="label-hidden"
+                                options={col.filteredFields}
+                                value={col.selectedFields}
+                                data-col-id={col.id}
+                                onchange={handleFieldChange}>
+                            </lightning-checkbox-group>
+                        </div>
+
+                        <!-- Parent fields (base column only) -->
+                        <template if:true={col.isBase}>
+                            <template if:true={col.parentGroups}>
+                                <template for:each={col.parentGroups} for:item="pg">
+                                    <div key={pg.relationshipName} class="parent-group">
+                                        <div class="parent-group-label">From: {pg.relationshipName}</div>
+                                        <template for:each={pg.fields} for:item="pf">
+                                            <span key={pf} class="slds-badge slds-badge_lightest slds-var-m-right_xx-small">{pg.relationshipName}.{pf}</span>
+                                        </template>
+                                    </div>
+                                </template>
+                            </template>
+                        </template>
+                    </div>
+
+                    <!-- Column Footer (WHERE/ORDER/LIMIT for non-base) -->
+                    <template if:true={col.isNotBase}>
+                        <div class="column-footer">
+                            <p class="section-label">Filters</p>
+                            <lightning-input label="WHERE" variant="label-inline" placeholder="e.g. StageName = 'Closed Won'" value={col.whereClause} data-col-id={col.id} onchange={handleWhereChange}></lightning-input>
+                            <lightning-input label="Sort by" variant="label-inline" placeholder="e.g. CreatedDate DESC" value={col.orderBy} data-col-id={col.id} onchange={handleOrderChange} class="slds-var-m-top_xx-small"></lightning-input>
+                            <lightning-input label="Limit" variant="label-inline" type="number" value={col.limitAmount} data-col-id={col.id} onchange={handleLimitChange} min="1" max="2000" class="slds-var-m-top_xx-small"></lightning-input>
+                        </div>
+                    </template>
+                </div>
+            </template>
+
+            <!-- Add Column Card -->
+            <div class="add-column-card" onclick={handleAddColumn}>
+                <div class="add-column-content">
+                    <div class="icon">+</div>
+                    <p class="slds-text-body_small" style="font-weight: 600;">Add Related Records</p>
+                    <p class="slds-text-body_small slds-text-color_weak">Line items, contacts, etc.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Column Picker Dropdown -->
+        <template if:true={showAddPicker}>
+            <div class="slds-box slds-theme_default slds-var-m-top_small" style="border-radius: 8px; max-width: 400px;">
+                <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-var-m-bottom_small">
+                    <h4 class="slds-text-heading_small" style="font-weight: 600; margin: 0;">Add related records</h4>
+                    <lightning-button-icon icon-name="utility:close" variant="bare" alternative-text="Close" onclick={handleCloseAddPicker}></lightning-button-icon>
+                </div>
+                <lightning-input type="search" placeholder="Search related lists..." value={addPickerSearch} onchange={handleAddPickerSearch} class="slds-var-m-bottom_small"></lightning-input>
+                <div class="slds-scrollable_y" style="max-height: 250px;">
+                    <template if:true={filteredAddOptions.length}>
+                        <ul class="slds-listbox slds-listbox_vertical slds-has-dividers_bottom-space">
+                            <template for:each={filteredAddOptions} for:item="opt">
+                                <li key={opt.value} class="slds-listbox__item">
+                                    <div class="slds-media slds-listbox__option slds-listbox__option_plain slds-media_small" data-value={opt.value} onclick={handleAddPickerSelect}>
+                                        <span class="slds-media__figure">
+                                            <lightning-icon icon-name="standard:related_list" size="small"></lightning-icon>
+                                        </span>
+                                        <span class="slds-media__body"><span class="slds-truncate">{opt.label}</span></span>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+                    </template>
+                    <template if:false={filteredAddOptions.length}>
+                        <p class="slds-text-body_small slds-text-color_weak slds-var-p-around_medium slds-text-align_center">No related lists found.</p>
+                    </template>
+                </div>
+            </div>
+        </template>
+    </template>
+
+    <!-- ==================== REPORT IMPORT MODAL ==================== -->
+    <template if:true={showReportModal}>
+        <section role="dialog" tabindex="-1" class="slds-modal slds-fade-in-open">
+            <div class="slds-modal__container">
+                <header class="slds-modal__header">
+                    <lightning-button-icon icon-name="utility:close" alternative-text="Close" variant="bare-inverse" class="slds-modal__close" onclick={handleCloseReportModal}></lightning-button-icon>
+                    <h2 class="slds-text-heading_medium">Import from Report</h2>
+                    <p class="slds-text-body_small slds-text-color_weak slds-var-m-top_x-small">Pick a report and we'll set up your template fields automatically.</p>
+                </header>
+                <div class="slds-modal__content slds-var-p-around_medium">
+                    <template if:false={showImportPreview}>
+                        <!-- Step 1: Select report -->
+                        <lightning-input type="search" label="Search reports" placeholder="Type a report name..." value={reportSearchTerm} onchange={handleReportSearch}></lightning-input>
+                        <div class="slds-scrollable_y slds-var-m-top_small" style="max-height: 300px;">
+                            <template if:true={reportSearchResults.length}>
+                                <ul class="slds-listbox slds-listbox_vertical slds-has-dividers_bottom-space">
+                                    <template for:each={reportSearchResults} for:item="report">
+                                        <li key={report.id} class="slds-listbox__item">
+                                            <div class={report.optionClass} data-id={report.id} data-name={report.name} onclick={handleReportSelect}>
+                                                <span class="slds-media__figure">
+                                                    <lightning-icon icon-name="standard:report" size="small"></lightning-icon>
+                                                </span>
+                                                <span class="slds-media__body">
+                                                    <span class="slds-truncate"><strong>{report.name}</strong></span>
+                                                    <template if:true={report.folder}>
+                                                        <span class="slds-text-body_small slds-text-color_weak"> — {report.folder}</span>
+                                                    </template>
+                                                </span>
+                                            </div>
+                                        </li>
+                                    </template>
+                                </ul>
+                            </template>
+                        </div>
+                    </template>
+
+                    <template if:true={showImportPreview}>
+                        <!-- Step 2: Preview import -->
+                        <div class="slds-box slds-theme_shade slds-var-m-bottom_medium" style="border-radius: 6px;">
+                            <p class="slds-text-body_regular"><strong>Report:</strong> {importPreviewData.reportName}</p>
+                            <p class="slds-text-body_small slds-text-color_weak slds-var-m-top_xx-small">
+                                {importPreviewData.fieldCount} fields detected. Click "Apply" to set up your template.
+                            </p>
+                        </div>
+                    </template>
+                </div>
+                <footer class="slds-modal__footer slds-grid slds-grid_align-spread slds-grid_vertical-align-center">
+                    <template if:true={selectedReportName}>
+                        <span class="slds-text-body_small"><strong>Selected:</strong> {selectedReportName}</span>
+                    </template>
+                    <template if:false={selectedReportName}>
+                        <span class="slds-text-body_small slds-text-color_weak">Select a report</span>
+                    </template>
+                    <div>
+                        <lightning-button label="Cancel" onclick={handleCloseReportModal}></lightning-button>
+                        <template if:false={showImportPreview}>
+                            <lightning-button label="Next" variant="brand" disabled={isImportDisabled} onclick={handleImportReport} class="slds-var-m-left_x-small"></lightning-button>
+                        </template>
+                        <template if:true={showImportPreview}>
+                            <lightning-button label="Apply to Template" variant="brand" onclick={handleConfirmImport} class="slds-var-m-left_x-small"></lightning-button>
+                        </template>
+                    </div>
+                </footer>
+            </div>
+        </section>
+        <div class="slds-backdrop slds-backdrop_open"></div>
+    </template>
+
+</template>
