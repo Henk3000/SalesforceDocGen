@@ -209,11 +209,11 @@
 
                              <!-- Builder Mode -->
                              <template if:false={isManualQuery}>
-                                <c-doc-gen-query-builder
+                                <c-doc-gen-column-builder
                                     selected-object={editTemplateObject}
-                                    query-config={editTemplateQuery} 
+                                    query-config={editTemplateQuery}
                                     onconfigchange={handleEditConfigChange}>
-                                </c-doc-gen-query-builder>
+                                </c-doc-gen-column-builder>
                              </template>
 
                              <!-- Manual Mode -->
@@ -254,12 +254,10 @@
                                     </p>
                                 </div>
                             </div>
-                             <c-doc-gen-query-builder
+                             <c-doc-gen-column-builder
                                 selected-object={editTemplateObject}
-                                query-config={editTemplateQuery} 
-                                show-tags-only="true"
-                                test-record-id={editTemplateTestRecordId}>
-                            </c-doc-gen-query-builder>
+                                query-config={editTemplateQuery}>
+                            </c-doc-gen-column-builder>
                         </lightning-tab>
 
                         <!-- Tab 4: Document & History -->
