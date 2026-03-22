@@ -90,6 +90,17 @@ export default class DocGenBulkRunner extends LightningElement {
                     else if (config.reportFilters && config.reportFilters.length > 0) {
                         const parts = config.reportFilters.map(f => {
                             if (f.operator === 'LIKE') return f.field + " LIKE '%" + f.value + "%'";
+                            if (f.operator === 'IN' || f.operator === 'NOT IN') {
+                                const vals = f.value.split(',').map(v => "'" + v.trim() + "'").join(', ');
+                                return f.field + ' ' + f.operator + ' (' + vals + ')';
+                            }
+                            // Date literals, numbers, booleans, dates don't need quotes
+                            const v = f.value.trim();
+                            const dateLiterals = ['TODAY','YESTERDAY','TOMORROW','LAST_WEEK','THIS_WEEK','NEXT_WEEK','LAST_MONTH','THIS_MONTH','NEXT_MONTH','LAST_QUARTER','THIS_QUARTER','NEXT_QUARTER','LAST_YEAR','THIS_YEAR','NEXT_YEAR','LAST_90_DAYS','NEXT_90_DAYS'];
+                            const upper = v.toUpperCase();
+                            if (dateLiterals.includes(upper) || upper.startsWith('LAST_N_') || upper.startsWith('NEXT_N_') || /^\d+$/.test(v) || /^\d{4}-\d{2}-\d{2}/.test(v) || upper === 'TRUE' || upper === 'FALSE' || upper === 'NULL') {
+                                return f.field + ' ' + f.operator + ' ' + v;
+                            }
                             return f.field + " " + f.operator + " '" + f.value + "'";
                         });
                         autoFilter = parts.join(' AND ');

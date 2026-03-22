@@ -1014,10 +1014,37 @@ public with sharing class DocGenController {
         for (Map<String, String> f : filters) {
             String op = f.get('operator');
             String val = f.get('value');
+            String fieldName = f.get('field');
             if (op == 'LIKE') {
-                filterParts.add(f.get('field') + ' LIKE \'%' + String.escapeSingleQuotes(val) + '%\'');
+                filterParts.add(fieldName + ' LIKE \'%' + String.escapeSingleQuotes(val) + '%\'');
+            } else if (op == 'IN' || op == 'NOT IN') {
+                // IN/NOT IN: value may be comma-separated list
+                // Format: StageName IN ('Closed Won', 'Negotiation')
+                List<String> vals = val.split(',');
+                List<String> quotedVals = new List<String>();
+                for (String v : vals) {
+                    quotedVals.add('\'' + String.escapeSingleQuotes(v.trim()) + '\'');
+                }
+                filterParts.add(fieldName + ' ' + op + ' (' + String.join(quotedVals, ', ') + ')');
             } else {
-                filterParts.add(f.get('field') + ' ' + op + ' \'' + String.escapeSingleQuotes(val) + '\'');
+                // Check if value is a SOQL date literal (no quotes needed)
+                Set<String> dateLiterals = new Set<String>{
+                    'TODAY', 'YESTERDAY', 'TOMORROW', 'LAST_WEEK', 'THIS_WEEK', 'NEXT_WEEK',
+                    'LAST_MONTH', 'THIS_MONTH', 'NEXT_MONTH', 'LAST_QUARTER', 'THIS_QUARTER',
+                    'NEXT_QUARTER', 'LAST_YEAR', 'THIS_YEAR', 'NEXT_YEAR', 'LAST_90_DAYS',
+                    'NEXT_90_DAYS', 'LAST_N_DAYS', 'NEXT_N_DAYS'
+                };
+                String upperVal = val.toUpperCase().trim();
+                Boolean isDateLiteral = dateLiterals.contains(upperVal) || upperVal.startsWith('LAST_N_') || upperVal.startsWith('NEXT_N_');
+                Boolean isNumeric = val.trim().isNumeric();
+                Boolean isDateFormat = Pattern.matches('\\d{4}-\\d{2}-\\d{2}(T.*)?', val.trim());
+                Boolean isBoolVal = upperVal == 'TRUE' || upperVal == 'FALSE' || upperVal == 'NULL';
+
+                if (isDateLiteral || isNumeric || isDateFormat || isBoolVal) {
+                    filterParts.add(fieldName + ' ' + op + ' ' + val.trim());
+                } else {
+                    filterParts.add(fieldName + ' ' + op + ' \'' + String.escapeSingleQuotes(val) + '\'');
+                }
             }
         }
         String bulkWhereClause = String.join(filterParts, ' AND ');
