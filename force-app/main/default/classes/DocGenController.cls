@@ -656,7 +656,8 @@ public with sharing class DocGenController {
 
         // Determine base object from report type
         String reportTypeName = metadata.getReportType().getType();
-        String baseObject = resolveReportBaseObject(reportTypeName);
+        String reportTypeLabel = metadata.getReportType().getLabel();
+        String baseObject = resolveReportBaseObject(reportTypeName, reportTypeLabel);
         if (baseObject == null) {
             throw new AuraHandledException('Could not determine the base object for this report. Report type: ' + reportTypeName);
         }
@@ -1044,74 +1045,74 @@ public with sharing class DocGenController {
      * Resolves a report type name to a base object API name.
      * Handles standard patterns like 'AccountList', 'OpportunityList', 'Contact', etc.
      */
+    /**
+     * Resolves a report type to its base Salesforce object.
+     * Uses multiple strategies — works for ANY report type, not just hardcoded ones.
+     */
     private static String resolveReportBaseObject(String reportTypeName) {
+        return resolveReportBaseObject(reportTypeName, null);
+    }
+
+    private static String resolveReportBaseObject(String reportTypeName, String reportTypeLabel) {
         if (String.isBlank(reportTypeName)) return null;
+        Map<String, Schema.SObjectType> globalDescribe = Schema.getGlobalDescribe();
 
-        // Common standard report type mappings
-        Map<String, String> standardMappings = new Map<String, String>{
-            'AccountList' => 'Account',
-            'OpportunityList' => 'Opportunity',
-            'ContactList' => 'Contact',
-            'LeadList' => 'Lead',
-            'CaseList' => 'Case',
-            'TaskList' => 'Task',
-            'EventList' => 'Event',
-            'ContractList' => 'Contract',
-            'CampaignList' => 'Campaign',
-            'ProductList' => 'Product2',
-            'SolutionList' => 'Solution',
-            'UserList' => 'User',
-            'AccountContactRole' => 'Account',
-            'OpportunityLineItem' => 'Opportunity',
-            'OpportunityProduct' => 'Opportunity',
-            'OpportunityContactProduct' => 'Opportunity',
-            'OpportunityContact' => 'Opportunity',
-            'AccountContact' => 'Account',
-            'CaseContact' => 'Case',
-            'CampaignMember' => 'Campaign'
-        };
+        // Strategy 1: Direct match (report type name IS the object name)
+        if (globalDescribe.containsKey(reportTypeName)) return reportTypeName;
 
-        if (standardMappings.containsKey(reportTypeName)) {
-            return standardMappings.get(reportTypeName);
-        }
-
-        // Try stripping 'List' suffix
+        // Strategy 2: Strip 'List' suffix — AccountList → Account
         if (reportTypeName.endsWith('List')) {
             String stripped = reportTypeName.removeEnd('List');
-            if (Schema.getGlobalDescribe().containsKey(stripped)) {
-                return stripped;
-            }
+            if (globalDescribe.containsKey(stripped)) return stripped;
         }
 
-        // Try direct match
-        if (Schema.getGlobalDescribe().containsKey(reportTypeName)) {
-            return reportTypeName;
+        // Strategy 3: Custom report types ending in __c — query the DeveloperName
+        if (reportTypeName.endsWith('__c')) {
+            // Custom report type — the first column's prefix is often the base object
+            // This is handled in Strategy 6 below
         }
 
-        // Try with __c suffix for custom report types
-        if (Schema.getGlobalDescribe().containsKey(reportTypeName + '__c')) {
-            return reportTypeName + '__c';
-        }
-
-        // Smart parsing: compound report types like OpportunityLead, AccountCase, etc.
-        // Try matching the longest standard object name as a prefix
-        List<String> standardObjects = new List<String>{
-            'Opportunity', 'Account', 'Contact', 'Lead', 'Case', 'Campaign',
-            'Contract', 'Order', 'Product', 'Task', 'Event', 'User', 'Solution'
-        };
-        // Sort by length descending so "Opportunity" matches before "Case" in "OpportunityCaseContact"
-        // (Already in roughly right order)
-        for (String objName : standardObjects) {
-            if (reportTypeName.startsWith(objName)) {
-                // Verify it exists in Schema
-                if (Schema.getGlobalDescribe().containsKey(objName)) {
-                    return objName;
+        // Strategy 4: Match the report type label against object labels
+        // "Accounts" → Account, "Opportunities with Contact Roles and Products" → Opportunity
+        if (String.isNotBlank(reportTypeLabel)) {
+            String labelLower = reportTypeLabel.toLowerCase();
+            for (String objName : globalDescribe.keySet()) {
+                Schema.DescribeSObjectResult objDesc = globalDescribe.get(objName).getDescribe();
+                if (!objDesc.isQueryable() || objDesc.isDeprecatedAndHidden()) continue;
+                String objLabel = objDesc.getLabel().toLowerCase();
+                String objLabelPlural = objDesc.getLabelPlural() != null ? objDesc.getLabelPlural().toLowerCase() : '';
+                // "Accounts" starts with "Account" label plural
+                if (String.isNotBlank(objLabelPlural) && labelLower.startsWith(objLabelPlural)) {
+                    return objDesc.getName();
+                }
+                if (labelLower.startsWith(objLabel)) {
+                    return objDesc.getName();
                 }
             }
         }
 
-        // Last resort: try the report type label — "Opportunities with Leads" → "Opportunity"
-        // (Would need the label passed in, skip for now)
+        // Strategy 5: Match standard object names as prefix of the report type name
+        // OpportunityLead → Opportunity, AccountCase → Account
+        List<String> commonObjects = new List<String>{
+            'Opportunity', 'Account', 'Contact', 'Lead', 'Case', 'Campaign',
+            'Contract', 'Order', 'Task', 'Event', 'User', 'Solution', 'Product'
+        };
+        for (String objName : commonObjects) {
+            if (reportTypeName.startsWith(objName) && globalDescribe.containsKey(objName)) {
+                return objName;
+            }
+        }
+
+        // Strategy 6: Custom report type with __c — try to resolve via name minus suffix
+        if (reportTypeName.contains('__c')) {
+            String basePart = reportTypeName.substringBefore('__c');
+            // Remove common prefixes/suffixes from custom report type developer names
+            for (String objName : commonObjects) {
+                if (basePart.containsIgnoreCase(objName) && globalDescribe.containsKey(objName)) {
+                    return objName;
+                }
+            }
+        }
 
         return null;
     }
