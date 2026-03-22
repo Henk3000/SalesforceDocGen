@@ -236,6 +236,85 @@ const VERSION_COLUMNS = [
         this.editTemplateTestRecordId = event.detail.recordId;
     }
 
+    // Generate a flat tag list from the query config for the tags view
+    get editTemplateTags() {
+        const qc = this.editTemplateQuery;
+        if (!qc) return null;
+
+        try {
+            // Try JSON v3
+            if (qc.trim().startsWith('{')) {
+                const config = JSON.parse(qc);
+                if (config.v >= 3 && config.nodes) {
+                    const sections = [];
+                    for (const node of config.nodes) {
+                        const tags = [];
+                        if (node.fields) {
+                            for (const f of node.fields) {
+                                tags.push({ code: '{' + f + '}' });
+                            }
+                        }
+                        if (node.parentFields) {
+                            for (const pf of node.parentFields) {
+                                tags.push({ code: '{' + pf + '}' });
+                            }
+                        }
+                        const isLoop = !!node.parentNode;
+                        sections.push({
+                            name: node.object + (isLoop ? ' (loop)' : ''),
+                            isLoop,
+                            loopStart: isLoop ? '{#' + node.relationshipName + '}' : '',
+                            loopEnd: isLoop ? '{/' + node.relationshipName + '}' : '',
+                            tags
+                        });
+                    }
+                    return sections.length > 0 ? sections : null;
+                }
+            }
+
+            // Legacy: parse field names from the query string
+            const fields = qc.split(',').map(f => f.trim()).filter(f => !f.startsWith('('));
+            const subqueries = qc.match(/\(\s*SELECT\s+([\s\S]+?)\s+FROM\s+(\S+)/gi) || [];
+            const sections = [];
+
+            if (fields.length > 0) {
+                sections.push({
+                    name: this.editTemplateObject || 'Base Fields',
+                    isLoop: false,
+                    tags: fields.map(f => ({ code: '{' + f + '}' }))
+                });
+            }
+
+            for (const sq of subqueries) {
+                const match = sq.match(/SELECT\s+([\s\S]+?)\s+FROM\s+(\S+)/i);
+                if (match) {
+                    const childFields = match[1].split(',').map(f => f.trim());
+                    const relName = match[2].replace(')', '');
+                    sections.push({
+                        name: relName,
+                        isLoop: true,
+                        loopStart: '{#' + relName + '}',
+                        loopEnd: '{/' + relName + '}',
+                        tags: childFields.map(f => ({ code: '{' + f + '}' }))
+                    });
+                }
+            }
+
+            return sections.length > 0 ? sections : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    handleCopyEditTag(event) {
+        const tag = event.currentTarget.dataset.tag;
+        if (tag && navigator.clipboard) {
+            navigator.clipboard.writeText(tag).then(() => {
+                this.dispatchEvent(new ShowToastEvent({ title: 'Copied', message: tag, variant: 'success' }));
+            });
+        }
+    }
+
     handleTitleFormatChange(event) {
         this.editTemplateTitleFormat = event.detail.value;
     }

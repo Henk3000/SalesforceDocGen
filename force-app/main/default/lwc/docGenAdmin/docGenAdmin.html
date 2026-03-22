@@ -233,31 +233,33 @@
                              </template>
                         </lightning-tab>
 
-                        <!-- Tab 3: Template Tags (Dynamic Header) -->
-                        <lightning-tab label="Template Tags" value="tags">
-                            <div class="slds-grid slds-gutters slds-var-m-bottom_medium slds-grid_vertical-align-center">
-                                <div class="slds-col">
-                                    <h3 class="slds-text-heading_small">{editTemplateObject} Fields</h3>
-                                </div>
-                                <div class="slds-col">
-                                    <lightning-record-picker
-                                        label="Test Record"
-                                        variant="label-hidden"
-                                        object-api-name={editTemplateObject}
-                                        value={editTemplateTestRecordId}
-                                        onchange={handleEditTestRecordChange}
-                                        placeholder="Search test record..."
-                                        disabled={isCreating}> 
-                                    </lightning-record-picker>
-                                    <p class="slds-text-body_small slds-text-color_weak slds-var-m-top_xx-small">
-                                        Current ID: {editTemplateTestRecordId}
-                                    </p>
-                                </div>
+                        <!-- Tab 3: Template Tags — simple copy-paste list -->
+                        <lightning-tab label="Copy-Paste Tags" value="tags">
+                            <div class="slds-var-m-bottom_small">
+                                <p class="slds-text-body_small slds-text-color_weak">Click any tag to copy it. Paste directly into your Word template.</p>
                             </div>
-                             <c-doc-gen-column-builder
-                                selected-object={editTemplateObject}
-                                query-config={editTemplateQuery}>
-                            </c-doc-gen-column-builder>
+                            <div class="slds-box slds-theme_shade" style="border-radius: 6px; max-height: 500px; overflow-y: auto;">
+                                <template if:true={editTemplateTags}>
+                                    <template for:each={editTemplateTags} for:item="section">
+                                        <div key={section.name} class="slds-var-m-bottom_small">
+                                            <h4 class="slds-text-title_bold slds-var-m-bottom_xx-small">{section.name}</h4>
+                                            <template if:true={section.isLoop}>
+                                                <code class="slds-var-m-right_x-small" style="font-size: 0.8125rem; color: #0176d3; cursor: pointer; background: #fff; padding: 2px 8px; border-radius: 4px; border: 1px solid #d1e3f8;" data-tag={section.loopStart} onclick={handleCopyEditTag}>{section.loopStart}</code>
+                                                <span class="slds-text-body_small slds-text-color_weak">...your content...</span>
+                                                <code class="slds-var-m-left_x-small" style="font-size: 0.8125rem; color: #0176d3; cursor: pointer; background: #fff; padding: 2px 8px; border-radius: 4px; border: 1px solid #d1e3f8;" data-tag={section.loopEnd} onclick={handleCopyEditTag}>{section.loopEnd}</code>
+                                            </template>
+                                            <div class="slds-var-m-top_xx-small" style="display: flex; flex-wrap: wrap; gap: 4px;">
+                                                <template for:each={section.tags} for:item="tag">
+                                                    <code key={tag.code} style="font-size: 0.8125rem; color: #0176d3; cursor: pointer; background: #fff; padding: 2px 8px; border-radius: 4px; border: 1px solid #e5e5e5;" data-tag={tag.code} onclick={handleCopyEditTag}>{tag.code}</code>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </template>
+                                <template if:false={editTemplateTags}>
+                                    <p class="slds-text-body_small slds-text-color_weak">No tags configured. Edit the query configuration to add fields.</p>
+                                </template>
+                            </div>
                         </lightning-tab>
 
                         <!-- Tab 4: Document & History -->

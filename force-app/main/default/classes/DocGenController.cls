@@ -1015,6 +1015,17 @@ public with sharing class DocGenController {
             String op = f.get('operator');
             String val = f.get('value');
             String fieldName = f.get('field');
+
+            // Detect multi-value equals: "Value1,Value2,Value3" → convert to IN
+            // But not formatted numbers like "2,000" (those start with " or are purely numeric)
+            if ((op == '=' || op == '!=') && val.contains(',') && !val.startsWith('"')) {
+                String stripped = val.replaceAll('[,\\d\\.\\s]', '');
+                if (stripped.length() > 0) {
+                    // Has non-numeric chars after stripping commas/digits → it's multi-value text
+                    op = (op == '=') ? 'IN' : 'NOT IN';
+                }
+            }
+
             if (op == 'LIKE') {
                 filterParts.add(fieldName + ' LIKE \'%' + String.escapeSingleQuotes(val) + '%\'');
             } else if (op == 'IN' || op == 'NOT IN') {
@@ -1036,7 +1047,7 @@ public with sharing class DocGenController {
                 };
                 String upperVal = val.toUpperCase().trim();
                 Boolean isDateLiteral = dateLiterals.contains(upperVal) || upperVal.startsWith('LAST_N_') || upperVal.startsWith('NEXT_N_');
-                Boolean isNumeric = val.trim().isNumeric();
+                Boolean isNumeric = val.trim().isNumeric() || Pattern.matches('-?\\d+\\.?\\d*', val.trim());
                 Boolean isDateFormat = Pattern.matches('\\d{4}-\\d{2}-\\d{2}(T.*)?', val.trim());
                 Boolean isBoolVal = upperVal == 'TRUE' || upperVal == 'FALSE' || upperVal == 'NULL';
 
