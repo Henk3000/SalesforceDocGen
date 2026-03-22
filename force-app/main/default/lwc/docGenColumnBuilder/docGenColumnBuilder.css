@@ -1,10 +1,17 @@
 /* Column builder — horizontal scroll layout for multi-object templates */
+:host {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+}
+
 .columns-container {
     display: flex;
     gap: 1rem;
     overflow-x: auto;
     padding-bottom: 0.5rem;
     scroll-behavior: smooth;
+    max-width: 100%;
 }
 
 .object-column {

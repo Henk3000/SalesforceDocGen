@@ -49,8 +49,15 @@
 
                     <!-- Column Header -->
                     <div class="column-header">
-                        <span class={col.badgeClass}>{col.badgeLabel}</span>
-                        <h3>{col.label}</h3>
+                        <div style="flex: 1; min-width: 0;">
+                            <div class="slds-grid slds-grid_vertical-align-center slds-var-m-bottom_xx-small" style="gap: 0.5rem;">
+                                <span class={col.badgeClass}>{col.badgeLabel}</span>
+                                <h3>{col.label}</h3>
+                            </div>
+                            <template if:true={col.hasSubtitle}>
+                                <p class="slds-text-body_small slds-text-color_weak" style="margin: 0;">{col.subtitle}</p>
+                            </template>
+                        </div>
                         <template if:true={col.isNotBase}>
                             <lightning-button-icon icon-name="utility:close" variant="bare" size="small" alternative-text="Remove" data-col-id={col.id} onclick={handleRemoveColumn}></lightning-button-icon>
                         </template>

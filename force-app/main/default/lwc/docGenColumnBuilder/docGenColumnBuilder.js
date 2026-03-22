@@ -55,6 +55,10 @@ export default class DocGenColumnBuilder extends LightningElement {
             if (this.selectedObject) {
                 const opt = data.find(o => o.value === this.selectedObject);
                 if (opt) this.selectedObjectLabel = opt.label;
+                // Auto-init base column if object is set but no columns exist
+                if (this.objectColumns.length === 0) {
+                    this._initBaseColumn(this.selectedObject, this.selectedObjectLabel);
+                }
             }
         }
     }
@@ -162,10 +166,19 @@ export default class DocGenColumnBuilder extends LightningElement {
     // === COLUMN MANAGEMENT ===
 
     _createColumn(role, objectApiName, label, relationshipName, junctionConfig) {
+        const baseLabel = this.selectedObjectLabel || this.selectedObject || '';
+        let subtitle = '';
+        if (role === 'child') {
+            subtitle = 'Related to: ' + baseLabel;
+        } else if (role === 'junction' && junctionConfig) {
+            subtitle = 'Linked via: ' + (junctionConfig.junctionRel || '');
+        }
+
         return {
             id: nextColId(),
             objectApiName,
             label,
+            subtitle,
             role,
             relationshipName: relationshipName || null,
             junctionConfig: junctionConfig || null,
@@ -182,7 +195,8 @@ export default class DocGenColumnBuilder extends LightningElement {
             badgeLabel: role === 'base' ? 'Main Record' :
                         role === 'junction' ? 'Linked Records' : 'Related List',
             isBase: role === 'base',
-            isNotBase: role !== 'base'
+            isNotBase: role !== 'base',
+            hasSubtitle: role !== 'base'
         };
     }
 
