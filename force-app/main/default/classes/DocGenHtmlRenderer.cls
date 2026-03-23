@@ -1118,16 +1118,17 @@ public with sharing class DocGenHtmlRenderer {
      * No images needed — Blob.toPdf() renders CSS perfectly.
      */
     private static String renderBarcodeHtml(String text) {
-        // Extract marker: ##BARCODE:code128:VALUE##
+        // Extract marker: ##BARCODE:type:size:VALUE##
         Integer startIdx = text.indexOf('##BARCODE:');
         if (startIdx == -1) return text.escapeHtml4();
         Integer endIdx = text.indexOf('##', startIdx + 10);
         if (endIdx == -1) return text.escapeHtml4();
 
         String marker = text.substring(startIdx + 10, endIdx);
-        List<String> parts = marker.split(':', 2);
+        List<String> parts = marker.split(':', 3);
         String barcodeType = parts[0];
-        String value = parts.size() > 1 ? parts[1] : '';
+        String sizeSpec = parts.size() > 1 ? parts[1] : '';
+        String value = parts.size() > 2 ? parts[2] : '';
 
         // Unescape XML entities
         value = value.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>');
@@ -1135,19 +1136,64 @@ public with sharing class DocGenHtmlRenderer {
         String pattern = BarcodeGenerator.getPattern(value, barcodeType);
         if (pattern == null) return value.escapeHtml4();
 
-        // Render as inline CSS bars
-        String html = '<div style="display:inline-block;white-space:nowrap;line-height:0;">';
-        for (Integer i = 0; i < pattern.length(); i++) {
-            String color = pattern.substring(i, i + 1) == '1' ? '#000' : '#fff';
-            html += '<span style="display:inline-block;width:1px;height:50px;background:' + color + ';"></span>';
+        String html;
+        if (barcodeType == 'qr') {
+            html = renderQrHtml(pattern, sizeSpec);
+        } else {
+            html = renderCode128Html(pattern, sizeSpec);
         }
-        html += '</div>';
 
-        // Include any text before/after the marker
         String before = text.substring(0, startIdx);
         String after = text.substring(endIdx + 2);
         return (String.isNotBlank(before) ? before.escapeHtml4() : '') +
                html +
                (String.isNotBlank(after) ? after.escapeHtml4() : '');
+    }
+
+    /** Renders Code 128 as inline CSS bars. */
+    private static String renderCode128Html(String pattern, String sizeSpec) {
+        // Parse size: "300x80" or default
+        Integer barWidth = 1;
+        Integer barHeight = 50;
+        if (String.isNotBlank(sizeSpec) && sizeSpec.contains('x')) {
+            List<String> dims = sizeSpec.split('x');
+            if (dims.size() == 2 && dims[0].trim().isNumeric() && dims[1].trim().isNumeric()) {
+                barWidth = Math.max(1, Integer.valueOf(dims[0].trim()) / pattern.length());
+                barHeight = Integer.valueOf(dims[1].trim());
+            }
+        }
+
+        String html = '<div style="display:inline-block;white-space:nowrap;line-height:0;">';
+        for (Integer i = 0; i < pattern.length(); i++) {
+            String color = pattern.substring(i, i + 1) == '1' ? '#000' : '#fff';
+            html += '<span style="display:inline-block;width:' + barWidth + 'px;height:' + barHeight + 'px;background:' + color + ';"></span>';
+        }
+        html += '</div>';
+        return html;
+    }
+
+    /** Renders QR code as a CSS grid table. */
+    private static String renderQrHtml(String pattern, String sizeSpec) {
+        List<String> rows = pattern.split('\n');
+        Integer modules = rows.size();
+
+        // Parse size: single number = total px, default 150
+        Integer totalPx = 150;
+        if (String.isNotBlank(sizeSpec) && sizeSpec.trim().isNumeric()) {
+            totalPx = Integer.valueOf(sizeSpec.trim());
+        }
+        Integer cellPx = Math.max(1, totalPx / modules);
+
+        String html = '<table style="border-collapse:collapse;display:inline-table;line-height:0;">';
+        for (String row : rows) {
+            html += '<tr>';
+            for (Integer c = 0; c < row.length(); c++) {
+                String color = row.substring(c, c + 1) == '1' ? '#000' : '#fff';
+                html += '<td style="width:' + cellPx + 'px;height:' + cellPx + 'px;background:' + color + ';padding:0;"></td>';
+            }
+            html += '</tr>';
+        }
+        html += '</table>';
+        return html;
     }
 }

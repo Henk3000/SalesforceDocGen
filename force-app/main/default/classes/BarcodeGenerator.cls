@@ -122,8 +122,16 @@ public class BarcodeGenerator {
      * Returns the bar pattern string ('1' = black bar, '0' = white space).
      * Used by DocGenHtmlRenderer to render as CSS bars for PDF.
      */
+    /**
+     * Returns the bar/grid pattern.
+     * Code 128: single line of '0' and '1' characters.
+     * QR: rows separated by '\n', each row is '0'/'1' per module.
+     */
     public static String getPattern(String value, String barcodeType) {
         if (String.isBlank(value)) return null;
+        if (barcodeType == 'qr') {
+            return buildQrPattern(value);
+        }
         if (barcodeType == null || barcodeType == 'code128') {
             return buildCode128Pattern(value);
         }
@@ -136,6 +144,321 @@ public class BarcodeGenerator {
             return generateCode128(value);
         }
         return null;
+    }
+
+    // ---------------------------------------------------------------------------
+    // QR Code — Version 1-4, Error Correction Level M, Byte mode
+    // ---------------------------------------------------------------------------
+
+    // EC codeword counts per version, Level M (versions 1-14)
+    private static final List<Integer> QR_EC_CODEWORDS = new List<Integer>{
+        0, 10, 16, 26, 36, 48, 64, 72, 88, 110, 130, 150, 176, 198, 216
+    };
+    // Total data codewords per version, Level M (versions 1-14)
+    private static final List<Integer> QR_DATA_CAPACITY = new List<Integer>{
+        0, 16, 28, 44, 64, 86, 108, 124, 154, 182, 216, 254, 290, 334, 365
+    };
+    // Alignment pattern center positions per version (0 = none)
+    private static final List<List<Integer>> QR_ALIGN_POS = new List<List<Integer>>{
+        new List<Integer>(),              // v0 (unused)
+        new List<Integer>(),              // v1: none
+        new List<Integer>{6,18},          // v2
+        new List<Integer>{6,22},          // v3
+        new List<Integer>{6,26},          // v4
+        new List<Integer>{6,30},          // v5
+        new List<Integer>{6,34},          // v6
+        new List<Integer>{6,22,38},       // v7
+        new List<Integer>{6,24,42},       // v8
+        new List<Integer>{6,26,46},       // v9
+        new List<Integer>{6,28,50},       // v10
+        new List<Integer>{6,30,54},       // v11
+        new List<Integer>{6,32,58},       // v12
+        new List<Integer>{6,34,62},       // v13
+        new List<Integer>{6,26,46,66}     // v14
+    };
+
+    private static String buildQrPattern(String value) {
+        // Convert to byte mode data
+        List<Integer> dataBytes = new List<Integer>();
+        for (Integer i = 0; i < value.length(); i++) {
+            Integer c = value.charAt(i);
+            if (c > 255) c = 63; // '?' for non-ASCII
+            dataBytes.add(c);
+        }
+
+        // Select smallest version that fits
+        Integer version = 0;
+        for (Integer v = 1; v <= 14; v++) {
+            // Byte mode: 4 (mode) + 8 or 16 (count) + 8*len bits → codewords
+            Integer countBits = v <= 9 ? 8 : 16;
+            Integer totalBits = 4 + countBits + dataBytes.size() * 8;
+            Integer needed = (totalBits + 7) / 8;
+            if (needed <= QR_DATA_CAPACITY[v]) {
+                version = v;
+                break;
+            }
+        }
+        if (version == 0) return null; // Data too long
+
+        Integer size = 4 * version + 17;
+        Integer totalDataCW = QR_DATA_CAPACITY[version];
+        Integer ecCW = QR_EC_CODEWORDS[version];
+
+        // Build data bit stream: mode(4) + count(8) + data(8*n) + terminator + padding
+        List<Integer> bits = new List<Integer>();
+        // Mode indicator: 0100 (byte mode)
+        addBits(bits, 4, 4);
+        // Character count (8 bits for v1-9, 16 bits for v10+)
+        Integer countBitLen = version <= 9 ? 8 : 16;
+        addBits(bits, dataBytes.size(), countBitLen);
+        // Data
+        for (Integer b : dataBytes) {
+            addBits(bits, b, 8);
+        }
+        // Terminator (up to 4 zeros)
+        Integer targetBits = totalDataCW * 8;
+        for (Integer i = 0; i < 4 && bits.size() < targetBits; i++) {
+            bits.add(0);
+        }
+        // Pad to byte boundary
+        while (Math.mod(bits.size(), 8) != 0 && bits.size() < targetBits) {
+            bits.add(0);
+        }
+        // Pad codewords: alternating 11101100 and 00010001
+        Integer padIdx = 0;
+        List<Integer> padBytes = new List<Integer>{ 236, 17 };
+        while (bits.size() < targetBits) {
+            addBits(bits, padBytes[Math.mod(padIdx++, 2)], 8);
+        }
+
+        // Convert bits to codewords
+        List<Integer> dataCodewords = new List<Integer>();
+        for (Integer i = 0; i < bits.size(); i += 8) {
+            Integer cw = 0;
+            for (Integer b = 0; b < 8 && (i + b) < bits.size(); b++) {
+                cw = cw * 2 + bits[i + b];
+            }
+            dataCodewords.add(cw);
+        }
+
+        // Generate EC codewords using Reed-Solomon
+        List<Integer> ecCodewords = generateReedSolomon(dataCodewords, ecCW);
+
+        // Combine data + EC codewords into bit stream
+        List<Integer> finalBits = new List<Integer>();
+        for (Integer cw : dataCodewords) addBits(finalBits, cw, 8);
+        for (Integer cw : ecCodewords) addBits(finalBits, cw, 8);
+
+        // Create the QR matrix
+        List<List<Integer>> matrix = new List<List<Integer>>();
+        List<List<Boolean>> reserved = new List<List<Boolean>>();
+        for (Integer r = 0; r < size; r++) {
+            List<Integer> row = new List<Integer>();
+            List<Boolean> resRow = new List<Boolean>();
+            for (Integer c = 0; c < size; c++) {
+                row.add(0);
+                resRow.add(false);
+            }
+            matrix.add(row);
+            reserved.add(resRow);
+        }
+
+        // Place finder patterns (3 corners)
+        placeFinderPattern(matrix, reserved, 0, 0, size);
+        placeFinderPattern(matrix, reserved, size - 7, 0, size);
+        placeFinderPattern(matrix, reserved, 0, size - 7, size);
+
+        // Place timing patterns
+        for (Integer i = 8; i < size - 8; i++) {
+            Integer val = Math.mod(i, 2) == 0 ? 1 : 0;
+            matrix[6][i] = val; reserved[6][i] = true;
+            matrix[i][6] = val; reserved[i][6] = true;
+        }
+
+        // Reserve format info areas
+        for (Integer i = 0; i < 8; i++) {
+            if (!reserved[8][i]) reserved[8][i] = true;
+            if (!reserved[i][8]) reserved[i][8] = true;
+            if (i < 7) {
+                if (!reserved[8][size - 1 - i]) reserved[8][size - 1 - i] = true;
+                if (!reserved[size - 1 - i][8]) reserved[size - 1 - i][8] = true;
+            }
+        }
+        reserved[8][8] = true;
+        // Dark module
+        matrix[size - 8][8] = 1;
+        reserved[size - 8][8] = true;
+
+        // Alignment patterns for version >= 2
+        if (version >= 2) {
+            List<Integer> alignPos = QR_ALIGN_POS[version];
+            for (Integer aRow : alignPos) {
+                for (Integer aCol : alignPos) {
+                    placeAlignmentPattern(matrix, reserved, aRow, aCol);
+                }
+            }
+        }
+
+        // Place data bits (bottom-right, going up, zigzag)
+        Integer bitIdx = 0;
+        for (Integer right = size - 1; right >= 1; right -= 2) {
+            if (right == 6) right = 5; // Skip timing column
+            for (Integer vert = 0; vert < size; vert++) {
+                for (Integer j = 0; j < 2; j++) {
+                    Integer col = right - j;
+                    Boolean upward = Math.mod((size - 1 - right) / 2, 2) == 0;
+                    Integer row = upward ? size - 1 - vert : vert;
+                    if (col >= 0 && col < size && row >= 0 && row < size && !reserved[row][col]) {
+                        if (bitIdx < finalBits.size()) {
+                            matrix[row][col] = finalBits[bitIdx++];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply mask pattern 0 (checkerboard: (row + col) % 2 == 0)
+        for (Integer r = 0; r < size; r++) {
+            for (Integer c = 0; c < size; c++) {
+                if (!reserved[r][c] && Math.mod(r + c, 2) == 0) {
+                    matrix[r][c] = matrix[r][c] == 1 ? 0 : 1;
+                }
+            }
+        }
+
+        // Write format information (ECL M = 00, mask 0 = 000 → format bits with BCH)
+        // Pre-computed: ECL M (00) + mask 0 (000) → 15-bit format = 101010000010010
+        List<Integer> formatBits = new List<Integer>{ 1,0,1,0,1,0,0,0,0,0,1,0,0,1,0 };
+        // Horizontal: bits 0-7 along row 8, bits 8-14 along column 8
+        for (Integer i = 0; i < 15; i++) {
+            Integer fb = formatBits[i];
+            // Around top-left finder
+            if (i < 6) { matrix[8][i] = fb; }
+            else if (i == 6) { matrix[8][7] = fb; }
+            else if (i == 7) { matrix[8][8] = fb; }
+            else if (i == 8) { matrix[7][8] = fb; }
+            else { matrix[14 - i][8] = fb; }
+            // Around other finders
+            if (i < 8) { matrix[size - 1 - i][8] = fb; }
+            else { matrix[8][size - 15 + i] = fb; }
+        }
+
+        // Serialize to string (rows separated by newlines)
+        String result = '';
+        for (Integer r = 0; r < size; r++) {
+            if (r > 0) result += '\n';
+            for (Integer c = 0; c < size; c++) {
+                result += String.valueOf(matrix[r][c]);
+            }
+        }
+        return result;
+    }
+
+    private static void placeFinderPattern(List<List<Integer>> matrix, List<List<Boolean>> reserved, Integer row, Integer col, Integer size) {
+        // 7x7 finder pattern
+        List<List<Integer>> pattern = new List<List<Integer>>{
+            new List<Integer>{1,1,1,1,1,1,1},
+            new List<Integer>{1,0,0,0,0,0,1},
+            new List<Integer>{1,0,1,1,1,0,1},
+            new List<Integer>{1,0,1,1,1,0,1},
+            new List<Integer>{1,0,1,1,1,0,1},
+            new List<Integer>{1,0,0,0,0,0,1},
+            new List<Integer>{1,1,1,1,1,1,1}
+        };
+        for (Integer r = -1; r <= 7; r++) {
+            for (Integer c = -1; c <= 7; c++) {
+                Integer mr = row + r;
+                Integer mc = col + c;
+                if (mr < 0 || mr >= size || mc < 0 || mc >= size) continue;
+                if (r >= 0 && r < 7 && c >= 0 && c < 7) {
+                    matrix[mr][mc] = pattern[r][c];
+                } else {
+                    matrix[mr][mc] = 0; // Separator
+                }
+                reserved[mr][mc] = true;
+            }
+        }
+    }
+
+    private static void placeAlignmentPattern(List<List<Integer>> matrix, List<List<Boolean>> reserved, Integer centerRow, Integer centerCol) {
+        for (Integer r = -2; r <= 2; r++) {
+            for (Integer c = -2; c <= 2; c++) {
+                Integer mr = centerRow + r;
+                Integer mc = centerCol + c;
+                if (reserved[mr][mc]) return; // Overlaps finder — skip entirely
+            }
+        }
+        for (Integer r = -2; r <= 2; r++) {
+            for (Integer c = -2; c <= 2; c++) {
+                Integer mr = centerRow + r;
+                Integer mc = centerCol + c;
+                Integer absR = Math.abs(r);
+                Integer absC = Math.abs(c);
+                matrix[mr][mc] = (absR == 2 || absC == 2 || (absR == 0 && absC == 0)) ? 1 : 0;
+                reserved[mr][mc] = true;
+            }
+        }
+    }
+
+    private static void addBits(List<Integer> bits, Integer value, Integer count) {
+        for (Integer i = count - 1; i >= 0; i--) {
+            bits.add(Math.mod(value / (Integer) Math.pow(2, i), 2));
+        }
+    }
+
+    // Reed-Solomon error correction over GF(256)
+    private static final Integer QR_GF_POLY = 285; // x^8 + x^4 + x^3 + x^2 + 1
+
+    private static List<Integer> generateReedSolomon(List<Integer> data, Integer ecCount) {
+        // Build log/antilog tables for GF(256)
+        List<Integer> gfExp = new List<Integer>();
+        List<Integer> gfLog = new List<Integer>();
+        for (Integer i = 0; i < 256; i++) { gfExp.add(0); gfLog.add(0); }
+        Integer x = 1;
+        for (Integer i = 0; i < 255; i++) {
+            gfExp[i] = x;
+            gfLog[x] = i;
+            x *= 2;
+            if (x >= 256) x = Math.mod(x, 256) ^ (QR_GF_POLY - 256);
+        }
+
+        // Build generator polynomial
+        List<Integer> gen = new List<Integer>{ 1 };
+        for (Integer i = 0; i < ecCount; i++) {
+            List<Integer> newGen = new List<Integer>();
+            for (Integer j = 0; j <= gen.size(); j++) newGen.add(0);
+            for (Integer j = 0; j < gen.size(); j++) {
+                newGen[j] = newGen[j] ^ gfMultiply(gen[j], gfExp[i], gfExp, gfLog);
+                newGen[j + 1] = newGen[j + 1] ^ gen[j];
+            }
+            gen = newGen;
+        }
+
+        // Polynomial division
+        List<Integer> result = new List<Integer>();
+        for (Integer d : data) result.add(d);
+        for (Integer i = 0; i < ecCount; i++) result.add(0);
+
+        for (Integer i = 0; i < data.size(); i++) {
+            Integer coef = result[i];
+            if (coef != 0) {
+                for (Integer j = 0; j < gen.size(); j++) {
+                    result[i + j] = result[i + j] ^ gfMultiply(gen[j], coef, gfExp, gfLog);
+                }
+            }
+        }
+
+        // Return EC codewords (last ecCount entries)
+        List<Integer> ec = new List<Integer>();
+        for (Integer i = data.size(); i < result.size(); i++) {
+            ec.add(result[i]);
+        }
+        return ec;
+    }
+
+    private static Integer gfMultiply(Integer a, Integer b, List<Integer> gfExp, List<Integer> gfLog) {
+        if (a == 0 || b == 0) return 0;
+        return gfExp[Math.mod(gfLog[a] + gfLog[b], 255)];
     }
 
     /** Builds the Code 128B bar pattern string for a given value. */

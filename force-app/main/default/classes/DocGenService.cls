@@ -1096,21 +1096,18 @@ public with sharing class DocGenService {
                 }
                 cursor = tagClose + 1;
             } else if (tagContent.startsWith('*')) {
-                // Barcode tag: {*FieldName} (Code 128)
-                // Outputs a marker that DocGenHtmlRenderer renders as CSS bars for PDF
+                // Barcode/QR tag: {*Field}, {*Field:qr}, {*Field:qr:200}, {*Field:code128:300x80}
+                // Outputs a marker that DocGenHtmlRenderer renders as CSS for PDF
                 String barcodeSpec = tagContent.substring(1).trim();
-                String barcodeField = barcodeSpec;
-                String barcodeType = 'code128';
-                if (barcodeSpec.contains(':')) {
-                    List<String> bParts = barcodeSpec.split(':', 2);
-                    barcodeField = bParts[0].trim();
-                    barcodeType = bParts[1].trim().toLowerCase();
-                }
+                List<String> bParts = barcodeSpec.split(':');
+                String barcodeField = bParts[0].trim();
+                String barcodeType = bParts.size() > 1 ? bParts[1].trim().toLowerCase() : 'code128';
+                String barcodeSize = bParts.size() > 2 ? bParts[2].trim() : '';
                 Object val = resolveValue(data, barcodeField);
                 if (val != null) {
                     String barcodeValue = String.valueOf(val).escapeXml();
-                    // Embed marker in DOCX XML text — HTML renderer will detect and render as CSS bars
-                    output += '##BARCODE:' + barcodeType + ':' + barcodeValue + '##';
+                    // Marker format: ##BARCODE:type:size:VALUE##
+                    output += '##BARCODE:' + barcodeType + ':' + barcodeSize + ':' + barcodeValue + '##';
                 }
                 cursor = tagClose + 1;
             } else if (tagContent.contains(':') && isAggregateTag(tagContent)) {
@@ -1133,12 +1130,14 @@ public with sharing class DocGenService {
                 Object val = resolveValue(data, fieldName);
                 if (val != null) {
                     String strVal;
-                    // Apply date/time formatting if a format was specified
+                    // Apply formatting if a format specifier was provided
                     if (dateFormat != null && val instanceof DateTime) {
                         strVal = ((DateTime) val).format(dateFormat);
                     } else if (dateFormat != null && val instanceof Date) {
                         DateTime dt = DateTime.newInstance((Date) val, Time.newInstance(0, 0, 0, 0));
                         strVal = dt.format(dateFormat);
+                    } else if (dateFormat != null && isNumericFormat(dateFormat)) {
+                        strVal = formatNumber(val, dateFormat);
                     } else {
                         strVal = String.valueOf(val);
                     }
@@ -1355,6 +1354,80 @@ public with sharing class DocGenService {
         }
 
         return result;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Number/Currency Formatting
+    // {Amount:currency} → $500,000.00
+    // {Quantity:#,##0} → 1,234
+    // {Price:#,##0.00} → 1,234.56
+    // {Rate:percent} → 15.5%
+    // ---------------------------------------------------------------------------
+
+    private static final Set<String> NUMERIC_FORMATS = new Set<String>{
+        'currency', 'percent', 'number'
+    };
+
+    private static Boolean isNumericFormat(String fmt) {
+        if (fmt == null) return false;
+        String lower = fmt.toLowerCase().trim();
+        return NUMERIC_FORMATS.contains(lower) || lower.startsWith('#') || lower.startsWith('0');
+    }
+
+    private static String formatNumber(Object val, String fmt) {
+        Decimal num;
+        try {
+            num = Decimal.valueOf(String.valueOf(val));
+        } catch (Exception e) {
+            return String.valueOf(val); // Not a number — return as-is
+        }
+
+        String lower = fmt.toLowerCase().trim();
+
+        if (lower == 'currency') {
+            // $1,234.56
+            return '$' + formatWithCommas(num.setScale(2, RoundingMode.HALF_UP));
+        } else if (lower == 'percent') {
+            // 15.5%
+            return num.stripTrailingZeros().toPlainString() + '%';
+        } else if (lower == 'number') {
+            // 1,234 (no decimals)
+            return formatWithCommas(num.setScale(0, RoundingMode.HALF_UP));
+        } else {
+            // Custom pattern: #,##0 or #,##0.00
+            Integer decimals = 0;
+            if (lower.contains('.')) {
+                String afterDot = lower.substringAfter('.');
+                decimals = afterDot.length();
+            }
+            return formatWithCommas(num.setScale(decimals, RoundingMode.HALF_UP));
+        }
+    }
+
+    private static String formatWithCommas(Decimal num) {
+        Boolean negative = num < 0;
+        String raw = (negative ? num.abs() : num).toPlainString();
+
+        // Split on decimal point
+        String intPart = raw;
+        String decPart = '';
+        if (raw.contains('.')) {
+            intPart = raw.substringBefore('.');
+            decPart = '.' + raw.substringAfter('.');
+        }
+
+        // Insert commas every 3 digits from the right
+        String result = '';
+        Integer count = 0;
+        for (Integer i = intPart.length() - 1; i >= 0; i--) {
+            if (count > 0 && Math.mod(count, 3) == 0) {
+                result = ',' + result;
+            }
+            result = intPart.substring(i, i + 1) + result;
+            count++;
+        }
+
+        return (negative ? '-' : '') + result + decPart;
     }
 
     private static Boolean isAggregateTag(String tagContent) {

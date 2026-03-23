@@ -54,9 +54,63 @@ private class BarcodeGeneratorTest {
 
     @isTest
     static void testConsistentOutput() {
-        // Same input should produce same pattern
         String p1 = BarcodeGenerator.getPattern('SAME', 'code128');
         String p2 = BarcodeGenerator.getPattern('SAME', 'code128');
         System.assertEquals(p1, p2, 'Same input should produce same pattern');
+    }
+
+    // --- QR Code Tests ---
+
+    @isTest
+    static void testQrBasic() {
+        String qr = BarcodeGenerator.getPattern('Hello', 'qr');
+        System.assertNotEquals(null, qr, 'QR pattern should not be null');
+        List<String> rows = qr.split('\n');
+        // Version 1 = 21x21
+        System.assertEquals(21, rows.size(), 'QR should be 21 rows for short text');
+        System.assertEquals(21, rows[0].length(), 'QR should be 21 cols');
+    }
+
+    @isTest
+    static void testQrUrl() {
+        String qr = BarcodeGenerator.getPattern('https://salesforce.com/test', 'qr');
+        System.assertNotEquals(null, qr);
+        List<String> rows = qr.split('\n');
+        // URL needs version 2+ (25x25)
+        System.assert(rows.size() >= 25, 'URL should need at least version 2');
+    }
+
+    @isTest
+    static void testQr255Chars() {
+        // Standard text field max — should fit in version 14 or below
+        String longText = '';
+        for (Integer i = 0; i < 255; i++) longText += 'A';
+        String qr = BarcodeGenerator.getPattern(longText, 'qr');
+        System.assertNotEquals(null, qr, '255 chars should fit in QR');
+    }
+
+    @isTest
+    static void testQrNullAndBlank() {
+        System.assertEquals(null, BarcodeGenerator.getPattern(null, 'qr'));
+        System.assertEquals(null, BarcodeGenerator.getPattern('', 'qr'));
+    }
+
+    @isTest
+    static void testQrConsistent() {
+        String q1 = BarcodeGenerator.getPattern('TEST', 'qr');
+        String q2 = BarcodeGenerator.getPattern('TEST', 'qr');
+        System.assertEquals(q1, q2, 'Same input should produce same QR');
+    }
+
+    @isTest
+    static void testQrFinderPatterns() {
+        String qr = BarcodeGenerator.getPattern('A', 'qr');
+        List<String> rows = qr.split('\n');
+        // Top-left corner should start with 1111111 (finder pattern)
+        System.assert(rows[0].startsWith('1111111'), 'Top-left finder pattern missing');
+        // Top-right corner
+        System.assert(rows[0].endsWith('1111111'), 'Top-right finder pattern missing');
+        // Bottom-left corner
+        System.assert(rows[rows.size() - 1].startsWith('1111111'), 'Bottom-left finder pattern missing');
     }
 }
