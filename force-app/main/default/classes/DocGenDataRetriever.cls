@@ -136,9 +136,9 @@ public with sharing class DocGenDataRetriever {
                 for (Object f : fields) fieldNames.add(String.valueOf(f));
 
                 String subquery = '(SELECT ' + String.join(fieldNames, ', ') + ' FROM ' + rel;
-                String w = (String) child.get('where');
-                String o = (String) child.get('orderBy');
-                String l = (String) child.get('limit');
+                String w = sanitizeClause((String) child.get('where'), 'WHERE');
+                String o = sanitizeClause((String) child.get('orderBy'), 'ORDER BY');
+                String l = sanitizeClause((String) child.get('limit'), 'LIMIT');
                 if (String.isNotBlank(w)) subquery += ' WHERE ' + w;
                 if (String.isNotBlank(o)) subquery += ' ORDER BY ' + o;
                 if (String.isNotBlank(l)) subquery += ' LIMIT ' + l;
@@ -244,8 +244,8 @@ public with sharing class DocGenDataRetriever {
         String targetQuery = 'SELECT ' + String.join(targetFieldList, ', ') +
             ' FROM ' + String.escapeSingleQuotes(js.targetObject) +
             ' WHERE Id IN :targetIds';
-        if (String.isNotBlank(js.targetWhere)) targetQuery += ' AND ' + js.targetWhere;
-        if (String.isNotBlank(js.targetOrderBy)) targetQuery += ' ORDER BY ' + js.targetOrderBy;
+        if (String.isNotBlank(js.targetWhere)) targetQuery += ' AND ' + sanitizeClause(js.targetWhere, 'WHERE');
+        if (String.isNotBlank(js.targetOrderBy)) targetQuery += ' ORDER BY ' + sanitizeClause(js.targetOrderBy, 'ORDER BY');
 
         Map<Id, Map<String, Object>> targetMap = new Map<Id, Map<String, Object>>();
         try {
@@ -426,9 +426,9 @@ public with sharing class DocGenDataRetriever {
             String childQuery = 'SELECT ' + String.join(selectFields, ', ') +
                 ' FROM ' + String.escapeSingleQuotes(child.objectApiName) +
                 ' WHERE ' + String.escapeSingleQuotes(child.lookupField) + ' IN :parentIds';
-            if (String.isNotBlank(child.whereClause)) childQuery += ' AND ' + child.whereClause;
-            if (String.isNotBlank(child.orderByClause)) childQuery += ' ORDER BY ' + child.orderByClause;
-            if (String.isNotBlank(child.limitClause)) childQuery += ' LIMIT ' + child.limitClause;
+            if (String.isNotBlank(child.whereClause)) childQuery += ' AND ' + sanitizeClause(child.whereClause, 'WHERE');
+            if (String.isNotBlank(child.orderByClause)) childQuery += ' ORDER BY ' + sanitizeClause(child.orderByClause, 'ORDER BY');
+            if (String.isNotBlank(child.limitClause)) childQuery += ' LIMIT ' + sanitizeClause(child.limitClause, 'LIMIT');
 
             List<SObject> childResults;
             try {
@@ -917,5 +917,46 @@ public with sharing class DocGenDataRetriever {
             }
         }
         return data;
+    }
+
+    // ---------------------------------------------------------------------------
+    // SOQL Clause Sanitization
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Validates a dynamic SOQL clause (WHERE, ORDER BY, or LIMIT fragment)
+     * to prevent injection. Rejects clauses containing dangerous keywords.
+     * Returns the clause if safe, throws DocGenException if not.
+     */
+    private static String sanitizeClause(String clause, String clauseType) {
+        if (String.isBlank(clause)) return clause;
+        // Reject statement terminators and comments
+        if (clause.contains(';') || clause.contains('--') || clause.contains('/*')) {
+            throw new DocGenException('Invalid ' + clauseType + ' clause in query config.');
+        }
+        // Normalize whitespace for keyword matching
+        String normalized = clause.replaceAll('\\s+', ' ').toUpperCase().trim();
+        // LIMIT should be numeric only
+        if (clauseType == 'LIMIT') {
+            if (!clause.trim().isNumeric()) {
+                throw new DocGenException('LIMIT clause must be a number.');
+            }
+            return clause;
+        }
+        // Reject DML and structural SOQL keywords that don't belong in clauses
+        List<String> disallowed = new List<String>{
+            'INSERT ', 'UPDATE ', 'DELETE ', 'MERGE ', 'UNDELETE ',
+            'DROP ', 'ALTER ', 'CREATE ', 'GRANT ', 'REVOKE '
+        };
+        // WHERE clauses should not contain subqueries
+        if (clauseType == 'WHERE') {
+            disallowed.add('SELECT ');
+        }
+        for (String keyword : disallowed) {
+            if (normalized.contains(keyword)) {
+                throw new DocGenException('Invalid ' + clauseType + ' clause: disallowed keyword detected.');
+            }
+        }
+        return clause;
     }
 }

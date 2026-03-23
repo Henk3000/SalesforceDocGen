@@ -264,7 +264,7 @@ export default class DocGenBulkRunner extends LightningElement {
 
                     if (autoFilter) {
                         this.condition = autoFilter;
-                        this.showToast('Filter Applied', 'Report filter loaded: ' + this.condition, 'info');
+                        this.showToast('Filter Applied', 'Report filter loaded.', 'info');
 
                         // Auto-save as a saved query if not already saved
                         const existingMatch = this.savedQueries.find(q => q.Query_Condition__c === autoFilter);
