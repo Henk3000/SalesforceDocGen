@@ -2,7 +2,7 @@
 
 Turn any Word template into a merged PDF or DOCX, straight from your Salesforce records.
 
-[![Version](https://img.shields.io/badge/version-2.2.0_PDF_Merger-blue.svg)](#install)
+[![Version](https://img.shields.io/badge/version-2.3.0_Apollo+-blue.svg)](#install)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Salesforce-00A1E0.svg)](https://www.salesforce.com)
 [![Buy Amanda a Coffee](https://img.shields.io/badge/Buy_Amanda_a_Coffee-%E2%98%95-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/davemoudya)
@@ -36,12 +36,12 @@ Or click: [Install in Production](https://login.salesforce.com/packaging/install
 
 ## How It Works
 
-1. **Name your template** — pick a name, output type (PDF or Word), and the Salesforce object
+1. **Name your template** — pick a name, output type (PDF, Word, Excel, or PowerPoint), and the Salesforce object
 2. **Pick your data** — use the visual query builder to select fields, parent lookups, and child lists (supports deep nesting: Account → Opportunities → Line Items)
-3. **Upload your Word file** — add merge tags like `{Name}`, `{Account.Name}`, or `{#Contacts}...{/Contacts}` where you want data
+3. **Upload your template file** — add merge tags like `{Name}`, `{Account.Name}`, or `{#Contacts}...{/Contacts}` where you want data
 4. **Generate** — from any record page, or in bulk, or from a Flow
 
-That's it. DocGen handles the rest — merging data, injecting images, rendering PDFs, all server-side.
+That's it. DocGen handles the rest — merging data, injecting images, computing totals, rendering output.
 
 ---
 
@@ -57,8 +57,22 @@ That's it. DocGen handles the rest — merging data, injecting images, rendering
 | `{%ImageField:WxH}` | Dynamic image from ContentVersion | `{%Logo__c:200x60}` |
 | `{#BoolField}...{/BoolField}` | Show/hide based on field value | `{#IsActive}Active member{/IsActive}` |
 | `{RichTextField}` | Full rich text (bold, italic, images) | `{Description}` on a Rich Text Area |
+| `{SUM:List.Field}` | Aggregate — sum, count, avg, min, max | `{SUM:QuoteLineItems.TotalPrice}`, `{COUNT:Contacts}` |
+| `{*FieldName}` | Code 128 barcode from field value | `{*ProductCode}`, `{*OrderNumber}` |
 
-Tags inherit the formatting from your Word template — whatever font, color, and size the tag has in Word is what the output gets.
+Tags inherit the formatting from your template — whatever font, color, and size the tag has is what the output gets.
+
+### Template Formats
+
+| Format | Template File | Output | Merge Tags | Images | Loops | Notes |
+|--------|--------------|--------|------------|--------|-------|-------|
+| **Word** | `.docx` | PDF or DOCX | All tags | Yes | Yes (table row expansion) | Full feature support. Custom fonts in DOCX output. |
+| **Excel** | `.xlsx` | XLSX | Field tags, loops, aggregates | No | Yes (row duplication) | Tags go in cells. Shared strings are inlined automatically. No PDF output. |
+| **PowerPoint** | `.pptx` | PPTX | Field tags, loops | No | Yes | Tags in text boxes/shapes. No image injection. No PDF output. |
+
+**Excel tips:** Put `{FieldName}` directly in a cell. For loops, use `{#ChildList}` in one row, your field tags in the next row, and `{/ChildList}` in the row after — each child record duplicates the middle row. Aggregate tags like `{SUM:QuoteLineItems.TotalPrice}` work outside loops to compute totals.
+
+**PowerPoint tips:** Place merge tags inside text boxes or shapes. Loops duplicate the slide content for each record. Image injection and rich text are not supported in PPTX — use Word for those.
 
 ---
 
@@ -81,11 +95,18 @@ Generate your document with DocGen. Send it to a signature provider. Best tool f
 | **Deep Relationships** | Account → Opportunities → Line Items → Schedules. No depth limit in templates. |
 | **PDF Generation** | Server-side via `Blob.toPdf()` with zero-heap image rendering |
 | **DOCX Output** | Client-side assembly for unlimited file sizes. Custom fonts carry through. |
+| **XLSX Output** | Excel templates with merge tags in cells. Shared strings inlined automatically. |
+| **PPTX Output** | PowerPoint templates with merge tags in text boxes and shapes. |
+| **Aggregate Tags** | `{SUM:...}`, `{COUNT:...}`, `{AVG:...}`, `{MIN:...}`, `{MAX:...}` — computed from child records |
+| **Barcode Tags** | `{*FieldName}` renders Code 128 barcodes as CSS bars in PDF. No fonts needed. |
+| **PDF Merger** | Merge generated PDFs with existing PDFs on the record — client-side, no heap limits |
+| **Merge-Only Mode** | Combine existing PDFs without generating a template. Dual-listbox reordering. |
+| **Document Packets** | Generate multiple templates into one merged PDF. Optionally append existing PDFs. |
+| **Save to Record** | All formats (PDF, DOCX, XLSX) can be saved back to the record |
 | **Bulk Generation** | Hundreds of records with real-time progress tracking |
 | **Flow Integration** | `DocGenFlowAction` (single) and `DocGenBulkFlowAction` (bulk) invocable actions |
 | **Image Injection** | Dynamic images from ContentVersion IDs, rich text fields, or template-embedded graphics |
 | **Template Versioning** | Full history with preview, download, restore, and sample generation |
-| **PDF Merger** | Merge generated PDFs with existing PDFs on the record — client-side, no heap limits |
 | **Zero External Dependencies** | No HTTP callouts, no JavaScript libraries, no external services |
 
 ---

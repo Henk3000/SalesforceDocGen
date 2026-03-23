@@ -1,8 +1,8 @@
 {
   "packageDirectories": [
     {
-      "versionName": "Apollo+ — PDF Merger & Merge-Only Mode",
-      "versionNumber": "2.2.0.NEXT",
+      "versionName": "Apollo+ — Aggregates, Barcodes, Excel, PDF Merger",
+      "versionNumber": "2.3.0.NEXT",
       "path": "force-app",
       "default": true,
       "package": "Document Generation",

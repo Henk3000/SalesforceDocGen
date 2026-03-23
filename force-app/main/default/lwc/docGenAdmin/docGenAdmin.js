@@ -71,8 +71,8 @@ const VERSION_COLUMNS = [
     // Create State
     newTemplateName = '';
     newTemplateCategory = '';
-    newTemplateType = 'Word';
-    newTemplateOutputFormat = 'PDF';
+    @track newTemplateType = 'Word';
+    @track newTemplateOutputFormat = 'PDF';
     newTemplateObject = 'Account';
     newTemplateDesc = '';
     newTemplateQuery = '';
@@ -85,9 +85,9 @@ const VERSION_COLUMNS = [
     editTemplateId;
     editTemplateName;
     editTemplateCategory;
-    editTemplateType;
+    @track editTemplateType;
     editTemplateObject;
-    editTemplateOutputFormat;
+    @track editTemplateOutputFormat;
     editTemplateDesc;
     editTemplateQuery;
     editTemplateTestRecordId;
@@ -190,7 +190,13 @@ const VERSION_COLUMNS = [
     // --- Create Handlers ---
     handleNameChange(event) { this.newTemplateName = event.detail.value; }
     handleCategoryChange(event) { this.newTemplateCategory = event.detail.value; }
-    handleTypeChange(event) { this.newTemplateType = event.detail.value; }
+    handleTypeChange(event) {
+        this.newTemplateType = event.detail.value;
+        // Excel only supports Native output — auto-switch from PDF
+        if (event.detail.value === 'Excel' && this.newTemplateOutputFormat === 'PDF') {
+            this.newTemplateOutputFormat = 'Native';
+        }
+    }
     handleOutputFormatChange(event) { this.newTemplateOutputFormat = event.detail.value; }
     handleDescChange(event) { this.newTemplateDesc = event.detail.value; }
 
@@ -214,7 +220,12 @@ const VERSION_COLUMNS = [
     // --- Edit Handlers ---
     handleEditNameChange(event) { this.editTemplateName = event.detail.value; }
     handleEditCategoryChange(event) { this.editTemplateCategory = event.detail.value; }
-    handleEditTypeChange(event) { this.editTemplateType = event.detail.value; }
+    handleEditTypeChange(event) {
+        this.editTemplateType = event.detail.value;
+        if (event.detail.value === 'Excel' && this.editTemplateOutputFormat === 'PDF') {
+            this.editTemplateOutputFormat = 'Native';
+        }
+    }
     handleEditOutputFormatChange(event) { this.editTemplateOutputFormat = event.detail.value; }
     handleEditDescChange(event) { this.editTemplateDesc = event.detail.value; }
     handleEditDefaultChange(event) { this.editTemplateIsDefault = event.target.checked; }
@@ -327,19 +338,29 @@ const VERSION_COLUMNS = [
     get typeOptions() {
         return [
             { label: 'Word', value: 'Word' },
-            { label: 'PowerPoint', value: 'PowerPoint' }
+            { label: 'PowerPoint', value: 'PowerPoint' },
+            { label: 'Excel', value: 'Excel' }
         ];
     }
 
     get outputFormatOptions() {
+        const type = this.isCreating ? this.newTemplateType : this.editTemplateType;
+        if (type === 'Excel') {
+            return [
+                { label: 'Native (.xlsx)', value: 'Native' }
+            ];
+        }
         return [
-            { label: 'Native (.docx / .pptx)', value: 'Native' },
+            { label: type === 'PowerPoint' ? 'Native (.pptx)' : 'Native (.docx)', value: 'Native' },
             { label: 'PDF', value: 'PDF' }
         ];
     }
 
     get acceptedFormats() {
-        return this.editTemplateType === 'PowerPoint' ? ['.pptx'] : ['.docx'];
+        const type = this.isCreating ? this.newTemplateType : this.editTemplateType;
+        if (type === 'PowerPoint') return ['.pptx'];
+        if (type === 'Excel') return ['.xlsx'];
+        return ['.docx'];
     }
 
     // --- Create Logic ---

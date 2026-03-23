@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.3.0 — "Apollo+"
+- **PDF Merger** — Generate a document and merge it with existing PDFs on the record in one step. Client-side merge engine (`docGenPdfMerger.js`) — pure JS, no external dependencies, zero heap.
+- **Merge-Only Mode** — Combine existing PDFs without generating a template. Dual-listbox for reordering. Select 2+ PDFs, merge, download or save.
+- **Document Packets** — Select multiple PDF templates, generate each for the same record, merge into one combined document. Optionally append existing PDFs.
+- **Aggregate Tags** — `{SUM:QuoteLineItems.TotalPrice}`, `{COUNT:Contacts}`, `{AVG:...}`, `{MIN:...}`, `{MAX:...}`. Computed from child record data already in memory — zero extra SOQL.
+- **Barcode Tags** — `{*FieldName}` renders Code 128 barcodes as CSS bars in PDF output. No images, no fonts — pure HTML/CSS rendered by `Blob.toPdf()`.
+- **Excel (XLSX) Output** — Upload an Excel template with merge tags in cells. Engine parses shared strings table, inlines references, merges tags, and assembles via client-side ZIP. Same pattern as DOCX.
+- **Save to Record for All Formats** — DOCX, XLSX, and PDF can all be saved back to the record. Previously PDF-only.
+- **Query Builder Fix** — Selecting fields, changing the search filter, and selecting more fields no longer loses previous selections. Hidden selections are preserved across filter changes.
+- **Show Selected Toggle** — New button in the query builder to filter the field list to only selected fields. Works alongside search.
+- **Robust PDF Parsing** — Root catalog detection follows `startxref` spec path with nested `<<>>` dictionary handling. Works with PDF 1.5+ cross-reference streams.
+- **Page Ordering Fix** — Merged PDFs preserve correct reading order from each document's page tree.
+
 ## v2.0.0 — "Apollo"
 - **Single-App Experience** — One tab, three cards: Templates, Bulk Generate, How It Works. No more tab sprawl.
 - **Bulk Runner Overhaul** — Typeahead template search, inline sample record picker, real PDF preview download, server-loaded job history. All in one view.

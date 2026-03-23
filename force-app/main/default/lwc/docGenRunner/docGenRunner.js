@@ -76,11 +76,9 @@ export default class DocGenRunner extends LightningElement {
     get outputOptions() {
         const formatLabel = this.templateOutputFormat || 'Document';
         const options = [
-            { label: `Download ${formatLabel}`, value: 'download' }
+            { label: `Download ${formatLabel}`, value: 'download' },
+            { label: `Save to Record`, value: 'save' }
         ];
-        if (formatLabel === 'PDF') {
-            options.push({ label: `Save to Record (${formatLabel})`, value: 'save' });
-        }
         return options;
     }
 
