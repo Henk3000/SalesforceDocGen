@@ -37,7 +37,7 @@ export default class DocGenCommandHub extends LightningElement {
     get bannerSubtext() {
         return this.templateCount === 0
             ? "Let's create your first template. It takes about 3 minutes."
-            : 'Upload a Word template with merge tags, generate PDFs or DOCX from any record.';
+            : 'Generate PDFs, Word docs, Excel spreadsheets, and PowerPoint from any record. Merge PDFs, add barcodes, compute totals — all native.';
     }
 
     get isTemplates() { return this.activeSection === 'templates'; }
