@@ -1,8 +1,8 @@
 {
   "packageDirectories": [
     {
-      "versionName": "Beacon — 2.7.0.5 - Default Template Fix & Tab Rendering",
-      "versionNumber": "2.7.0.5",
+      "versionName": "Beacon — 2.7.0.6 - Pre-flight Analysis & Report Import Fix",
+      "versionNumber": "2.7.0.6",
       "path": "force-app",
       "default": true,
       "package": "Document Generation",

@@ -762,14 +762,18 @@ export default class DocGenColumnBuilder extends LightningElement {
                     // Junction — same as before
                     const targetObjName = relName.replace('__junction_', '').split(':')[0];
                     let junctionRel = '';
+                    let targetIdField = targetObjName + 'Id';
                     if (result.junctions) {
                         const jInfo = result.junctions.find(j => j.targetObject === targetObjName);
-                        if (jInfo) junctionRel = jInfo.junctionRel || '';
+                        if (jInfo) {
+                            junctionRel = jInfo.junctionRel || '';
+                            targetIdField = jInfo.targetIdField || targetObjName + 'Id';
+                        }
                     }
                     const junctionNode = this._createNode(targetObjName,
                         targetObjName + (junctionRel ? ' (via ' + junctionRel + ')' : ' (linked)'),
                         false, rootNode.id, null, null,
-                        { junctionRel, targetObject: targetObjName, targetIdField: 'ContactId', targetFields: fields });
+                        { junctionRel, targetObject: targetObjName, targetIdField, targetFields: fields });
                     getObjectFields({ objectName: targetObjName }).then(fieldData => {
                         junctionNode.availableFields = fieldData;
                         junctionNode.filteredFields = fieldData.slice(0, 200);

@@ -1367,9 +1367,12 @@ public with sharing class DocGenController {
                 } else {
                     targetObj = remainder;
                 }
+                // Find the lookup field on the junction object that points to the target object
+                String targetIdField = resolveJunctionTargetIdField(junctionRel, targetObj);
                 junctionInfo.add(new Map<String, String>{
                     'targetObject' => targetObj,
                     'junctionRel' => junctionRel,
+                    'targetIdField' => targetIdField,
                     'fields' => String.join(childFields.get(relName), ',')
                 });
             }
@@ -1464,6 +1467,38 @@ public with sharing class DocGenController {
             }
         }
         return null;
+    }
+
+    /**
+     * Resolves the lookup field API name on a junction object that points to the target object.
+     * E.g., for OpportunityContactRoles → Contact, returns 'ContactId'.
+     * Dynamically finds the junction SObject from the relationship name, then scans its reference fields.
+     */
+    private static String resolveJunctionTargetIdField(String junctionRelName, String targetObjectName) {
+        if (String.isBlank(junctionRelName) || String.isBlank(targetObjectName)) {
+            return targetObjectName + 'Id';
+        }
+        // Derive the junction object API name from the relationship name
+        // OpportunityContactRoles → OpportunityContactRole, CampaignMembers → CampaignMember, etc.
+        List<String> candidates = new List<String>{
+            junctionRelName.removeEnd('s'),          // OpportunityContactRoles → OpportunityContactRole
+            junctionRelName.removeEnd('es'),          // AccountContactRelations → AccountContactRelation (if ends in 'es')
+            junctionRelName                           // Exact match (rare)
+        };
+        for (String candidate : candidates) {
+            SObjectType juncType = Schema.getGlobalDescribe().get(candidate);
+            if (juncType == null) continue;
+            for (SObjectField sof : juncType.getDescribe().fields.getMap().values()) {
+                Schema.DescribeFieldResult dfr = sof.getDescribe();
+                if (dfr.getType() != Schema.DisplayType.REFERENCE || dfr.getReferenceTo() == null) continue;
+                for (Schema.SObjectType ref : dfr.getReferenceTo()) {
+                    if (ref.getDescribe().getName() == targetObjectName) {
+                        return dfr.getName();
+                    }
+                }
+            }
+        }
+        return targetObjectName + 'Id';
     }
 
     /**

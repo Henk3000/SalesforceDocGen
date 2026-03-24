@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.7.0.6 — "Beacon"
+- **Pre-flight Job Analysis** — The Bulk Runner now runs a comprehensive governor limit analysis on "Validate Filter". Checks SOQL queries per batch, DML statements, record count limits, and heap usage (merge mode). The Run button is disabled until the filter is validated and all checks pass.
+- **Dynamic Junction Target ID** — Report import now dynamically resolves the lookup field on junction objects (e.g., `ContactId` on `OpportunityContactRole`) instead of hardcoding. Works for any junction relationship, not just Contact.
+- **View Job Button Fix** — The "View Job" button on the batch status card is now clearly visible (uses `variant="inverse"` for white-on-blue).
+- **All 495 Apex tests passing** (100% pass rate). E2E 19/19. Code Analyzer: 0 Critical, 0 High, 0 Medium.
+
 ## v2.7.0.5 — "Beacon"
 - **Default Template Auto-Select** — Fixed: templates marked as "Default Template for this Object" now auto-select in the document runner when opening a record page. Previously the dropdown always started on "Choose a template..." regardless of the default setting.
 - **One Default Per Object Enforcement** — Setting a template as default now automatically unsets any other default for the same object. Previously multiple templates could be toggled as default simultaneously.
