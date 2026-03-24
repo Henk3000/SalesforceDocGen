@@ -966,6 +966,64 @@ private class DocGenControllerTests {
     }
 
     // -----------------------------------------------------------------------
+    // saveTemplate — enforce one default per object
+    // -----------------------------------------------------------------------
+    @IsTest
+    static void testSaveTemplateDefaultEnforcement() {
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            DocGen_Template__c tpl1 = [SELECT Id FROM DocGen_Template__c LIMIT 1];
+
+            // Create a second template for the same object
+            DocGen_Template__c tpl2 = new DocGen_Template__c(
+                Name = 'Second Account Template',
+                Base_Object_API__c = 'Account',
+                Query_Config__c = 'Name',
+                Type__c = 'Word'
+            );
+            insert tpl2;
+
+            // Set tpl1 as default
+            Map<String, Object> fields1 = new Map<String, Object>{
+                'Id' => tpl1.Id,
+                'Name' => 'Controller Test Template',
+                'Category__c' => null,
+                'Type__c' => 'Word',
+                'Base_Object_API__c' => 'Account',
+                'Description__c' => null,
+                'Query_Config__c' => 'Name',
+                'Test_Record_Id__c' => null,
+                'Document_Title_Format__c' => null,
+                'Is_Default__c' => true
+            };
+            DocGenController.saveTemplate(fields1, false);
+
+            // Now set tpl2 as default — should unset tpl1
+            Map<String, Object> fields2 = new Map<String, Object>{
+                'Id' => tpl2.Id,
+                'Name' => 'Second Account Template',
+                'Category__c' => null,
+                'Type__c' => 'Word',
+                'Base_Object_API__c' => 'Account',
+                'Description__c' => null,
+                'Query_Config__c' => 'Name',
+                'Test_Record_Id__c' => null,
+                'Document_Title_Format__c' => null,
+                'Is_Default__c' => true
+            };
+
+            Test.startTest();
+            DocGenController.saveTemplate(fields2, false);
+            Test.stopTest();
+
+            DocGen_Template__c updatedTpl1 = [SELECT Is_Default__c FROM DocGen_Template__c WHERE Id = :tpl1.Id];
+            DocGen_Template__c updatedTpl2 = [SELECT Is_Default__c FROM DocGen_Template__c WHERE Id = :tpl2.Id];
+            System.assertEquals(false, updatedTpl1.Is_Default__c, 'Previous default should be unset');
+            System.assertEquals(true, updatedTpl2.Is_Default__c, 'New default should be set');
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // previewRecordData — exception path (covers line 104)
     // -----------------------------------------------------------------------
     @IsTest

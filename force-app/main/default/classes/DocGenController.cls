@@ -284,9 +284,26 @@ public with sharing class DocGenController {
             if (fields.containsKey('Output_Format__c')) {
                 template.Output_Format__c = (String) fields.get('Output_Format__c');
             }
-            // Update Default flag if provided
+            // Update Default flag if provided — enforce one default per object
             if (fields.containsKey('Is_Default__c')) {
-                template.Is_Default__c = (Boolean) fields.get('Is_Default__c');
+                Boolean isDefault = (Boolean) fields.get('Is_Default__c');
+                template.Is_Default__c = isDefault;
+                if (isDefault == true && template.Base_Object_API__c != null) {
+                    String baseObj = (String) fields.get('Base_Object_API__c');
+                    List<DocGen_Template__c> otherDefaults = [
+                        SELECT Id FROM DocGen_Template__c
+                        WHERE Base_Object_API__c = :baseObj
+                        AND Is_Default__c = true
+                        AND Id != :templateId
+                        WITH SYSTEM_MODE
+                    ];
+                    for (DocGen_Template__c other : otherDefaults) {
+                        other.Is_Default__c = false;
+                    }
+                    if (!otherDefaults.isEmpty()) {
+                        update otherDefaults; // NOPMD ApexCRUDViolation - package-internal custom object
+                    }
+                }
             }
             // Package-internal object — CRUD controlled by DocGen permission sets
             update template; // NOPMD ApexCRUDViolation - package-internal custom object; access controlled by DocGen permission sets

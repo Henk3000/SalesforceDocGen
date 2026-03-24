@@ -107,7 +107,16 @@ export default class DocGenRunner extends NavigationMixin(LightningElement) {
     wiredTemplates({ error, data }) {
         if (data) {
             this._templateData = data;
-            this.templateOptions = data.map(t => ({ label: t.Name, value: t.Id }));
+            // Auto-select the default template (query returns Is_Default__c DESC, so first match is the default)
+            const defaultTemplate = data.find(t => t.Is_Default__c);
+            this.templateOptions = data.map(t => ({
+                label: t.Name,
+                value: t.Id,
+                selected: defaultTemplate ? t.Id === defaultTemplate.Id : false
+            }));
+            if (defaultTemplate) {
+                this.selectedTemplateId = defaultTemplate.Id;
+            }
             this.error = undefined;
         } else if (error) {
             this.error = 'Error loading templates: ' + error.body.message;

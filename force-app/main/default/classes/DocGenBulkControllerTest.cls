@@ -1,0 +1,131 @@
+@IsTest
+public with sharing class DocGenBulkControllerTest {
+
+    @TestSetup
+    static void setup() {
+        // Create an Account for testing
+        Account acc = new Account(Name = 'Heap Test Account');
+        insert acc;
+
+        // Create a Template
+        DocGen_Template__c temp = new DocGen_Template__c(
+            Name = 'Heap Test Template',
+            Base_Object_API__c = 'Account',
+            Test_Record_Id__c = acc.Id,
+            Output_Format__c = 'PDF',
+            Query_Config__c = '{"v":3,"root":"Account","nodes":[{"id":"n0","object":"Account","fields":["Name"],"parentNode":null,"lookupField":null,"relationshipName":null}]}'
+        );
+        insert temp;
+
+        // Create a Template Version
+        DocGen_Template_Version__c ver = new DocGen_Template_Version__c(
+            Template__c = temp.Id,
+            Is_Active__c = true
+        );
+        insert ver;
+
+        // Attach a valid minimal DOCX file (Minimal valid ZIP structure with document.xml)
+        String dummyDocx = 'UEsDBBQAAAAIAAAAIQDp74EAAAABAAAADwAAAHdvcmQvZG9jdW1lbnQueG1sPz94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9InllcyI/Pgo8dzpkb2N1bWVudCB4bWxuczp3PSJodHRwOi8vc2NoZW1hcy5vcGVueG1sZm9ybWF0cy5vcmcvd29yZG1vY2Vzc2luZ21sLzIwMDYvbWFpbiI+PHc6Ym9keT48dzpwPjx3OnI+PHc6dD5UZXN0PC93OnQ+PC93OnI+PC93OnA+PC93OmJvZHk+PC93OmRvY3VtZW50PlBLAQIUABQAAAAIAAAAIQDp74EAAAABAAAADwAAAAAAAAAAAAAAAABAAAAAd29yZC9kb2N1bWVudC54bWxQSwUGAAAAAAEAAQA9AAAARwAAAAAA';
+        ContentVersion cv = new ContentVersion(
+            Title = 'Dummy.docx',
+            PathOnClient = 'Dummy.docx',
+            VersionData = EncodingUtil.base64Decode(dummyDocx),
+            IsMajorVersion = true
+        );
+        insert cv;
+
+        Id docId = [SELECT ContentDocumentId FROM ContentVersion WHERE Id = :cv.Id].ContentDocumentId;
+        insert new ContentDocumentLink(
+            LinkedEntityId = ver.Id,
+            ContentDocumentId = docId,
+            ShareType = 'V'
+        );
+        
+        ver.Content_Version_Id__c = cv.Id;
+        update ver;
+
+        // Create pre-decomposed XML ContentVersion so the PDF merge path works
+        String docXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+            '<w:body><w:p><w:r><w:t>{%Name}</w:t></w:r></w:p></w:body></w:document>';
+        ContentVersion xmlCv = new ContentVersion(
+            Title = 'docgen_tmpl_xml_' + ver.Id + '_word__document.xml',
+            PathOnClient = 'document.xml',
+            VersionData = Blob.valueOf(docXml)
+        );
+        insert xmlCv;
+    }
+
+    @IsTest
+    static void testEstimateHeapUsageSafe() {
+        DocGen_Template__c temp = [SELECT Id FROM DocGen_Template__c LIMIT 1];
+        
+        Test.startTest();
+        DocGenBulkController.HeapEstimate estimate = DocGenBulkController.estimateHeapUsage(temp.Id, 10);
+        Test.stopTest();
+
+        System.assertNotEquals(null, estimate, 'Estimate should not be null');
+        System.assertEquals(false, estimate.isRisk, 'Small count should not be a risk');
+        System.assert(estimate.message.contains('Safe'), 'Message should indicate safe status');
+    }
+
+    @IsTest
+    static void testEstimateHeapUsageRisk() {
+        DocGen_Template__c temp = [SELECT Id FROM DocGen_Template__c LIMIT 1];
+        
+        Test.startTest();
+        // 500,000 records with 2-byte chars and 25% buffer will definitely trigger 10MB+ risk
+        DocGenBulkController.HeapEstimate estimate = DocGenBulkController.estimateHeapUsage(temp.Id, 500000);
+        Test.stopTest();
+
+        System.assertNotEquals(null, estimate, 'Estimate should not be null');
+        System.assertEquals(true, estimate.isRisk, 'Large count should be a risk: ' + estimate.estimatedHeapMb + 'MB');
+        System.assert(estimate.message.contains('High risk'), 'Message should indicate high risk');
+    }
+
+    @IsTest
+    static void testEstimateHeapUsageNoTestId() {
+        DocGen_Template__c temp = [SELECT Id FROM DocGen_Template__c LIMIT 1];
+        temp.Test_Record_Id__c = null;
+        update temp;
+        
+        Test.startTest();
+        DocGenBulkController.HeapEstimate estimate = DocGenBulkController.estimateHeapUsage(temp.Id, 10);
+        Test.stopTest();
+
+        System.assert(estimate.message.contains('skipped'), 'Should indicate estimation was skipped: ' + estimate.message);
+    }
+
+    @IsTest
+    static void testValidateFilter() {
+        Test.startTest();
+        Integer count = DocGenBulkController.validateFilter('Account', 'Name LIKE \'Heap%\'');
+        Test.stopTest();
+
+        System.assertEquals(1, count, 'Should find 1 record');
+    }
+
+    @IsTest
+    static void testValidateFilterEmpty() {
+        Test.startTest();
+        Integer count = DocGenBulkController.validateFilter('Account', '');
+        Test.stopTest();
+
+        System.assert(count >= 1);
+    }
+
+    @IsTest
+    static void testSubmitJob() {
+        DocGen_Template__c temp = [SELECT Id FROM DocGen_Template__c LIMIT 1];
+        
+        Test.startTest();
+        Id jobId = DocGenBulkController.submitJob(temp.Id, 'Name != null', 'Test Job', true, 10, false);
+        Test.stopTest();
+
+        System.assertNotEquals(null, jobId, 'Job ID should be returned');
+        DocGen_Job__c job = [SELECT Status__c, Label__c FROM DocGen_Job__c WHERE Id = :jobId];
+        // In tests, the job might transition to Processing/Failed immediately
+        System.assertNotEquals(null, job.Status__c, 'Job status should be populated');
+        System.assertEquals('Test Job', job.Label__c, 'Job label should match');
+    }
+}

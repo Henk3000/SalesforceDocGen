@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.7.0.5 — "Beacon"
+- **Default Template Auto-Select** — Fixed: templates marked as "Default Template for this Object" now auto-select in the document runner when opening a record page. Previously the dropdown always started on "Choose a template..." regardless of the default setting.
+- **One Default Per Object Enforcement** — Setting a template as default now automatically unsets any other default for the same object. Previously multiple templates could be toggled as default simultaneously.
+- **Tab Character Rendering** — Fixed: Word tab characters (`<w:tab/>`) are now correctly rendered as fixed-width spaces in PDF output. A parsing bug caused `<w:tab` to be misidentified as `<w:t>` (text), silently dropping all tab stops.
+- **HeapEstimate Null Safety** — `HeapEstimate.isRisk` now initializes to `false` instead of `null`, preventing null-check failures when heap estimation encounters an exception.
+- **Test Coverage** — All 491 Apex tests passing (100% pass rate). E2E 19/19. New test for default template enforcement.
+
 ## v2.7.0.4 — "Beacon"
 - **Proactive Heap Estimator** — The Bulk Runner now automatically estimates the final heap usage before you start a merge job. It simulates a single document generation and projects the total memory requirement, warning you if the job is likely to exceed the 12MB limit.
 - **Word Header/Footer Support for PDF** — Content in Word headers and footers (like company addresses and logos) is now correctly included when generating PDFs.

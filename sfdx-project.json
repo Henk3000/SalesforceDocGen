@@ -1,8 +1,8 @@
 {
   "packageDirectories": [
     {
-      "versionName": "Beacon — 2.7.0.4 - Proactive Heap Estimator for Bulk Merge",
-      "versionNumber": "2.7.0.4",
+      "versionName": "Beacon — 2.7.0.5 - Default Template Fix & Tab Rendering",
+      "versionNumber": "2.7.0.5",
       "path": "force-app",
       "default": true,
       "package": "Document Generation",

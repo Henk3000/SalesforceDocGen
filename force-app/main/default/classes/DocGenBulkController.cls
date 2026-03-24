@@ -114,7 +114,7 @@ public with sharing class DocGenBulkController {
 
     public class HeapEstimate {
         @AuraEnabled public Decimal estimatedHeapMb;
-        @AuraEnabled public Boolean isRisk;
+        @AuraEnabled public Boolean isRisk = false;
         @AuraEnabled public String message;
     }
 

@@ -672,15 +672,27 @@ public with sharing class DocGenHtmlRenderer {
         
         // Walk through the run elements in order
         while (cursor < rXml.length()) {
-            Integer nextT = rXml.indexOf('<w:t', cursor);
             Integer nextBr = rXml.indexOf('<w:br', cursor);
             Integer nextTab = rXml.indexOf('<w:tab', cursor);
             Integer nextDrawing = rXml.indexOf('<w:drawing', cursor);
-            
+            // Find <w:t> or <w:t  but NOT <w:tab — indexOf('<w:t') false-matches <w:tab
+            Integer nextT = -1;
+            Integer tSearch = cursor;
+            while (tSearch < rXml.length()) {
+                Integer candidate = rXml.indexOf('<w:t', tSearch);
+                if (candidate == -1) break;
+                Integer afterTag = candidate + 4;
+                if (afterTag < rXml.length()) {
+                    String ch = rXml.substring(afterTag, afterTag + 1);
+                    if (ch == '>' || ch == ' ') { nextT = candidate; break; }
+                }
+                tSearch = afterTag;
+            }
+
             // Find the earliest element
             Integer nextPos = -1;
             String type = '';
-            
+
             if (nextT != -1 && (nextPos == -1 || nextT < nextPos)) { nextPos = nextT; type = 't'; }
             if (nextBr != -1 && (nextPos == -1 || nextBr < nextPos)) { nextPos = nextBr; type = 'br'; }
             if (nextTab != -1 && (nextPos == -1 || nextTab < nextPos)) { nextPos = nextTab; type = 'tab'; }

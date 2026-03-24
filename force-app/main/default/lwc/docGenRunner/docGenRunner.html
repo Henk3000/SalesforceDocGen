@@ -43,7 +43,7 @@
                             <select class="custom-select" onchange={handleTemplateChangeInternal}>
                                 <option value="">Choose a template...</option>
                                 <template for:each={templateOptions} for:item="tmpl">
-                                    <option key={tmpl.value} value={tmpl.value}>{tmpl.label}</option>
+                                    <option key={tmpl.value} value={tmpl.value} selected={tmpl.selected}>{tmpl.label}</option>
                                 </template>
                             </select>
                         </div>

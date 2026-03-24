@@ -1891,7 +1891,9 @@ private class DocGenHtmlRendererTest {
                 '</w:body></w:document>';
 
             String html = DocGenHtmlRenderer.convertToHtml(xml);
-            System.assert(!html.contains('border-top:'), 'nil border should not render');
+            // Check body content only (skip <head> CSS which contains border-top in hr rule)
+            String body = html.substringAfter('<body>');
+            System.assert(!body.contains('border-top:'), 'nil border should not render');
             System.assert(html.contains('NoBorder'), 'Should contain text');
         }
     }
