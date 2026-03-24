@@ -292,7 +292,7 @@ public with sharing class DocGenDataRetriever {
                     try {
                         targetIds.add(Id.valueOf(String.valueOf(idVal)));
                     } catch (Exception e) {
-                        // Non-ID value in junction lookup field — skip this record
+                        String ignored = e.getMessage(); // Non-ID value in junction lookup — skip
                     }
                 }
             }
@@ -591,7 +591,7 @@ public with sharing class DocGenDataRetriever {
                     try {
                         parentIds.add(Id.valueOf(String.valueOf(idVal)));
                     } catch (Exception e) {
-                        // Non-ID value in parent record — skip
+                        String ignored = e.getMessage(); // Non-ID value in parent record — skip
                     }
                 }
             }
@@ -786,7 +786,7 @@ public with sharing class DocGenDataRetriever {
                         try {
                             allChildDataMaps.put(Id.valueOf(String.valueOf(childIdVal)), childRec);
                         } catch (Exception e) {
-                            // Non-ID value in child record — skip for recursion
+                            String ignored = e.getMessage(); // Non-ID value in child record — skip
                         }
                     }
                 }
@@ -831,7 +831,7 @@ public with sharing class DocGenDataRetriever {
                 try {
                     targetIds.add(Id.valueOf(String.valueOf(idVal)));
                 } catch (Exception e) {
-                    // Non-ID value in junction target field — skip this record
+                    String ignored = e.getMessage(); // Non-ID value in junction target — skip
                 }
             }
         }
@@ -867,7 +867,7 @@ public with sharing class DocGenDataRetriever {
                     jRec.put(targetObject, tData);
                 }
             } catch (Exception e) {
-                // Non-ID value in target field — skip this record
+                String ignored = e.getMessage(); // Non-ID value in target field — skip
             }
         }
     }
@@ -1124,7 +1124,7 @@ public with sharing class DocGenDataRetriever {
                         try {
                             parentIds.add(Id.valueOf(String.valueOf(idVal)));
                         } catch (Exception e) {
-                            // Non-ID value — skip this child record
+                            String ignored = e.getMessage(); // Non-ID value — skip this child record
                         }
                     }
                 }
@@ -1274,7 +1274,7 @@ public with sharing class DocGenDataRetriever {
                     data.put(key, value);
                 }
             } catch (Exception e) {
-                // Field mapping failed (e.g., blob field access) — skip this field
+                String ignored = e.getMessage(); // Field mapping failed (e.g., blob field) — skip
             }
         }
         return data;
