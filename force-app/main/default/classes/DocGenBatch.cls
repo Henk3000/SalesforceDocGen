@@ -329,6 +329,7 @@ public with sharing class DocGenBatch implements Database.Batchable<SObject>, Da
                 delete new ContentDocument(Id = docId);
             } catch (Exception e) {
                 // Cleanup failure is non-fatal
+                System.debug(LoggingLevel.ERROR, 'DocGenBatch: Data cache cleanup failed: ' + e.getMessage());
             }
         }
     }
@@ -353,6 +354,7 @@ public with sharing class DocGenBatch implements Database.Batchable<SObject>, Da
             notification.send(new Set<String>{ job.CreatedById });
         } catch (Exception e) {
             // Notification failure is non-fatal
+            System.debug(LoggingLevel.ERROR, 'DocGenBatch: Job notification failed: ' + e.getMessage());
         }
     }
 }

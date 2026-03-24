@@ -343,6 +343,7 @@ public with sharing class DocGenController {
                     DocGenService.extractAndSaveTemplateImages(templateId, version.Id);
                 } catch (Exception imgErr) {
                     // Image extraction failure is non-fatal
+                    System.debug(LoggingLevel.ERROR, 'DocGenController: Image extraction failed: ' + imgErr.getMessage());
                 }
             }
         } catch (Exception e) {

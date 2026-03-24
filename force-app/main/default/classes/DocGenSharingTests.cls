@@ -19,36 +19,42 @@ private class DocGenSharingTests {
 
     @IsTest
     static void testSharingOperations() {
-        DocGen_Template__c t = [SELECT Id FROM DocGen_Template__c LIMIT 1];
-        User u = [SELECT Id FROM User WHERE LastName='Testing' LIMIT 1];
+        User runAsUser = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(runAsUser) {
+            DocGen_Template__c t = [SELECT Id FROM DocGen_Template__c LIMIT 1];
+            User u = [SELECT Id FROM User WHERE LastName='Testing' LIMIT 1];
 
-        Test.startTest();
+            Test.startTest();
 
-        // Share
-        DocGenController.shareTemplate(t.Id, u.Id, 'Read');
+            // Share
+            DocGenController.shareTemplate(t.Id, u.Id, 'Read');
 
-        // Verify Share exists via actual SOQL to guarantee valid ID type
-        DocGen_Template__Share shareRef = [SELECT Id FROM DocGen_Template__Share WHERE ParentId = :t.Id AND UserOrGroupId = :u.Id LIMIT 1];
-        System.assertNotEquals(null, shareRef, 'Share record should exist in DB');
+            // Verify Share exists via actual SOQL to guarantee valid ID type
+            DocGen_Template__Share shareRef = [SELECT Id FROM DocGen_Template__Share WHERE ParentId = :t.Id AND UserOrGroupId = :u.Id LIMIT 1];
+            System.assertNotEquals(null, shareRef, 'Share record should exist in DB');
 
-        // Remove Share
-        DocGenController.removeShare(shareRef.Id);
+            // Remove Share
+            DocGenController.removeShare(shareRef.Id);
 
-        List<Map<String, String>> shares = DocGenController.getTemplateShares(t.Id);
-        Boolean found = false;
-        for (Map<String, String> s : shares) {
-                        if (s.get('UserOrGroupId') == u.Id) { found = true; }
+            List<Map<String, String>> shares = DocGenController.getTemplateShares(t.Id);
+            Boolean found = false;
+            for (Map<String, String> s : shares) {
+                            if (s.get('UserOrGroupId') == u.Id) { found = true; }
+            }
+            System.assert(!found, 'Share should be removed');
+
+            Test.stopTest();
         }
-        System.assert(!found, 'Share should be removed');
-
-        Test.stopTest();
     }
 
     @IsTest
     static void testSearch() {
-        Test.startTest();
-        List<Map<String, String>> results = DocGenController.searchUsersAndGroups('Testing');
-        Test.stopTest();
-        System.assert(results.size() > 0, 'Should find user');
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            Test.startTest();
+            List<Map<String, String>> results = DocGenController.searchUsersAndGroups('Testing');
+            Test.stopTest();
+            System.assert(results.size() > 0, 'Should find user');
+        }
     }
 }

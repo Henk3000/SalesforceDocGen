@@ -116,6 +116,7 @@ public with sharing class DocGenMergeJob implements Queueable {
 
         } catch (Exception e) {
             // Non-fatal — don't fail the job
+            System.debug(LoggingLevel.ERROR, 'DocGenMergeJob: Job cleanup failed: ' + e.getMessage());
         }
     }
 }

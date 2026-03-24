@@ -85,43 +85,55 @@ private class DocGenMiscTests {
 
     @IsTest
     static void testGetOrgUrl() {
-        Test.startTest();
-        String orgUrl = DocGenSetupController.getOrgUrl();
-        Test.stopTest();
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            Test.startTest();
+            String orgUrl = DocGenSetupController.getOrgUrl();
+            Test.stopTest();
 
-        System.assertNotEquals(null, orgUrl);
-        System.assert(orgUrl.length() > 0);
+            System.assertNotEquals(null, orgUrl);
+            System.assert(orgUrl.length() > 0);
+        }
     }
 
     @IsTest
     static void testGetSettings() {
-        Test.startTest();
-        DocGen_Settings__c settings = DocGenSetupController.getSettings();
-        Test.stopTest();
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            Test.startTest();
+            DocGen_Settings__c settings = DocGenSetupController.getSettings();
+            Test.stopTest();
 
-        System.assertNotEquals(null, settings);
+            System.assertNotEquals(null, settings);
+        }
     }
 
     @IsTest
     static void testSaveSettings() {
-        Test.startTest();
-        DocGenSetupController.saveSettings('https://example.my.site.com');
-        Test.stopTest();
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            Test.startTest();
+            DocGenSetupController.saveSettings('https://example.my.site.com');
+            Test.stopTest();
 
-        DocGen_Settings__c settings = DocGen_Settings__c.getOrgDefaults();
-        System.assertEquals('https://example.my.site.com', settings.Experience_Site_Url__c);
+            DocGen_Settings__c settings = DocGen_Settings__c.getOrgDefaults();
+            System.assertEquals('https://example.my.site.com', settings.Experience_Site_Url__c);
+        }
     }
 
     @IsTest
     static void testSaveSettingsUpdatesExisting() {
-        DocGenSetupController.saveSettings('https://first.my.site.com');
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            DocGenSetupController.saveSettings('https://first.my.site.com');
 
-        Test.startTest();
-        DocGenSetupController.saveSettings('https://second.my.site.com');
-        Test.stopTest();
+            Test.startTest();
+            DocGenSetupController.saveSettings('https://second.my.site.com');
+            Test.stopTest();
 
-        DocGen_Settings__c settings = DocGen_Settings__c.getOrgDefaults();
-        System.assertEquals('https://second.my.site.com', settings.Experience_Site_Url__c);
+            DocGen_Settings__c settings = DocGen_Settings__c.getOrgDefaults();
+            System.assertEquals('https://second.my.site.com', settings.Experience_Site_Url__c);
+        }
     }
 
     // =========================================================================
@@ -130,94 +142,112 @@ private class DocGenMiscTests {
 
     @IsTest
     static void testGetRecordDataWithValidFields() {
-        Account acc = [SELECT Id FROM Account LIMIT 1];
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            Account acc = [SELECT Id FROM Account LIMIT 1];
 
-        Test.startTest();
-        Map<String, Object> result = DocGenDataRetriever.getRecordData(acc.Id, 'Account', 'Name, AccountSource');
-        Test.stopTest();
+            Test.startTest();
+            Map<String, Object> result = DocGenDataRetriever.getRecordData(acc.Id, 'Account', 'Name, AccountSource');
+            Test.stopTest();
 
-        System.assertNotEquals(null, result);
-        System.assertEquals('Misc Test Account', result.get('Name'));
-        System.assertEquals('Web', result.get('AccountSource'));
+            System.assertNotEquals(null, result);
+            System.assertEquals('Misc Test Account', result.get('Name'));
+            System.assertEquals('Web', result.get('AccountSource'));
+        }
     }
 
     @IsTest
     static void testGetRecordDataWithInvalidObject() {
-        Account acc = [SELECT Id FROM Account LIMIT 1];
-        Boolean caught = false;
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            Account acc = [SELECT Id FROM Account LIMIT 1];
+            Boolean caught = false;
 
-        Test.startTest();
-        try {
-            DocGenDataRetriever.getRecordData(acc.Id, 'NotARealObject__c', 'Name');
-        } catch (AuraHandledException e) {
-            caught = true;
+            Test.startTest();
+            try {
+                DocGenDataRetriever.getRecordData(acc.Id, 'NotARealObject__c', 'Name');
+            } catch (AuraHandledException e) {
+                caught = true;
+            }
+            Test.stopTest();
+
+            System.assert(caught, 'Should throw AuraHandledException for invalid object');
         }
-        Test.stopTest();
-
-        System.assert(caught, 'Should throw AuraHandledException for invalid object');
     }
 
     @IsTest
     static void testGetRecordDataWithBlankParams() {
-        Boolean caught = false;
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            Boolean caught = false;
 
-        Test.startTest();
-        try {
-            DocGenDataRetriever.getRecordData(null, '', '');
-        } catch (AuraHandledException e) {
-            caught = true;
+            Test.startTest();
+            try {
+                DocGenDataRetriever.getRecordData(null, '', '');
+            } catch (AuraHandledException e) {
+                caught = true;
+            }
+            Test.stopTest();
+
+            System.assert(caught, 'Should throw AuraHandledException for blank params');
         }
-        Test.stopTest();
-
-        System.assert(caught, 'Should throw AuraHandledException for blank params');
     }
 
     @IsTest
     static void testGetRecordDataWithRelationshipField() {
-        Account acc = [SELECT Id FROM Account LIMIT 1];
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            Account acc = [SELECT Id FROM Account LIMIT 1];
 
-        Test.startTest();
-        Map<String, Object> result = DocGenDataRetriever.getRecordData(acc.Id, 'Account', 'Name, Owner.Name');
-        Test.stopTest();
+            Test.startTest();
+            Map<String, Object> result = DocGenDataRetriever.getRecordData(acc.Id, 'Account', 'Name, Owner.Name');
+            Test.stopTest();
 
-        System.assertNotEquals(null, result);
-        System.assertEquals('Misc Test Account', result.get('Name'));
-        System.assert(result.containsKey('Owner'), 'Should contain Owner relationship data');
+            System.assertNotEquals(null, result);
+            System.assertEquals('Misc Test Account', result.get('Name'));
+            System.assert(result.containsKey('Owner'), 'Should contain Owner relationship data');
+        }
     }
 
     @IsTest
     static void testGetRecordDataWithNonExistentField() {
-        Account acc = [SELECT Id FROM Account LIMIT 1];
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            Account acc = [SELECT Id FROM Account LIMIT 1];
 
-        Test.startTest();
-        Map<String, Object> result = DocGenDataRetriever.getRecordData(acc.Id, 'Account', 'Name, TotallyFakeField__xyz');
-        Test.stopTest();
+            Test.startTest();
+            Map<String, Object> result = DocGenDataRetriever.getRecordData(acc.Id, 'Account', 'Name, TotallyFakeField__xyz');
+            Test.stopTest();
 
-        System.assertNotEquals(null, result);
-        System.assertEquals('Misc Test Account', result.get('Name'));
+            System.assertNotEquals(null, result);
+            System.assertEquals('Misc Test Account', result.get('Name'));
+        }
     }
 
     @IsTest
     static void testGetRecordDataWithBlankObjectOrFields() {
-        Account acc = [SELECT Id FROM Account LIMIT 1];
-        Boolean caught1 = false;
-        Boolean caught2 = false;
+        User u = [SELECT Id FROM User WHERE Id = :UserInfo.getUserId()];
+        System.runAs(u) {
+            Account acc = [SELECT Id FROM Account LIMIT 1];
+            Boolean caught1 = false;
+            Boolean caught2 = false;
 
-        Test.startTest();
-        try {
-            DocGenDataRetriever.getRecordData(acc.Id, '', 'Name');
-        } catch (AuraHandledException e) {
-            caught1 = true;
-        }
-        try {
-            DocGenDataRetriever.getRecordData(acc.Id, 'Account', '');
-        } catch (AuraHandledException e) {
-            caught2 = true;
-        }
-        Test.stopTest();
+            Test.startTest();
+            try {
+                DocGenDataRetriever.getRecordData(acc.Id, '', 'Name');
+            } catch (AuraHandledException e) {
+                caught1 = true;
+            }
+            try {
+                DocGenDataRetriever.getRecordData(acc.Id, 'Account', '');
+            } catch (AuraHandledException e) {
+                caught2 = true;
+            }
+            Test.stopTest();
 
-        System.assert(caught1, 'Should throw for blank object name');
-        System.assert(caught2, 'Should throw for blank fields config');
+            System.assert(caught1, 'Should throw for blank object name');
+            System.assert(caught2, 'Should throw for blank fields config');
+        }
     }
 
     // =========================================================================

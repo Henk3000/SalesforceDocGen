@@ -6,7 +6,12 @@ public with sharing class DocGenService {
     private static String currentTemplateType = 'Word'; // Set before processXml calls
     private static String currentOutputFormat = 'Native'; // Set before processXml — PDF skips blob loading for images
 
-    /** Public wrapper for processXml — used by e2e tests to validate tag processing. */
+    /**
+     * Public wrapper for processXml — used by e2e tests to validate tag processing.
+     * @param xml The XML string containing merge tags
+     * @param data The record data map to resolve tags against
+     * @return The processed XML with tags replaced by data values
+     */
     public static String processXmlForTest(String xml, Map<String, Object> data) {
         return processXml(xml, data);
     }
@@ -88,7 +93,9 @@ public with sharing class DocGenService {
             outputFormat = outputFormatOverride;
         }
 
-        if (base64File == null) throw new DocGenException('Template file content is missing.');
+        if (base64File == null) {
+            throw new DocGenException('Template file content is missing.');
+        }
 
         Map<String, Object> recordDataMap;
         if (dataObj instanceof Map<String, Object>) {
@@ -124,7 +131,9 @@ public with sharing class DocGenService {
             if (pdfResult != null) {
                 mr = pdfResult;
                 mr.docTitle = generateDocTitle((String) dataMap.get('titleFormat'), recordDataMap);
-                if (mr.docTitle == null) mr.docTitle = (String) resolveValue(recordDataMap, 'Name');
+                if (mr.docTitle == null) {
+                    mr.docTitle = (String) resolveValue(recordDataMap, 'Name');
+                }
                 return mr;
             }
         }
@@ -206,10 +215,14 @@ public with sharing class DocGenService {
             Integer relCursor = 0;
             while (relCursor < mr.relsXml.length()) {
                 Integer relStart = mr.relsXml.indexOf('<Relationship ', relCursor);
-                if (relStart == -1) break;
+                if (relStart == -1) {
+                    break;
+                }
                 Integer relSelfClose = mr.relsXml.indexOf('/>', relStart);
                 Integer relClose = mr.relsXml.indexOf('>', relStart);
-                if (relClose == -1) break;
+                if (relClose == -1) {
+                    break;
+                }
                 Integer relEnd = (relSelfClose != -1 && relSelfClose < relClose) ? relSelfClose + 2 : relClose + 1;
 
                 String relTag = mr.relsXml.substring(relStart, relEnd);
@@ -269,7 +282,9 @@ public with sharing class DocGenService {
 
         // Generate document title
         mr.docTitle = generateDocTitle((String) dataMap.get('titleFormat'), recordDataMap);
-        if (mr.docTitle == null) mr.docTitle = (String) resolveValue(recordDataMap, 'Name');
+        if (mr.docTitle == null) {
+            mr.docTitle = (String) resolveValue(recordDataMap, 'Name');
+        }
 
         return mr;
     }
@@ -332,7 +347,9 @@ public with sharing class DocGenService {
                 WHERE Template__c = :templateId AND Is_Active__c = true
                 WITH SYSTEM_MODE LIMIT 1
             ];
-            if (activeVersions.isEmpty()) return null;
+            if (activeVersions.isEmpty()) {
+                return null;
+            }
 
             String xmlPrefix = 'docgen_tmpl_xml_' + activeVersions[0].Id + '_';
             List<ContentVersion> xmlCvs = [
@@ -341,7 +358,9 @@ public with sharing class DocGenService {
                 WITH SYSTEM_MODE
             ];
 
-            if (xmlCvs.isEmpty()) return null;
+            if (xmlCvs.isEmpty()) {
+                return null;
+            }
 
             for (ContentVersion cv : xmlCvs) {
                 String key = cv.Title.substring(xmlPrefix.length());
@@ -350,7 +369,9 @@ public with sharing class DocGenService {
             cachedPreDecompAvailable = true;
         }
 
-        if (!cachedPreDecompAvailable || cachedXmlParts.isEmpty()) return null;
+        if (!cachedPreDecompAvailable || cachedXmlParts.isEmpty()) {
+            return null;
+        }
 
         // Process cached XML parts with this record's data
         for (String key : cachedXmlParts.keySet()) {
@@ -370,7 +391,9 @@ public with sharing class DocGenService {
             }
         }
 
-        if (mr.documentXml == null) return null;
+        if (mr.documentXml == null) {
+            return null;
+        }
 
         // Process pending images from merge field processing (RTF images, {%Field} images)
         if (!pendingImages.isEmpty()) {
@@ -440,6 +463,9 @@ public with sharing class DocGenService {
     /**
      * Processes a template with record data and returns the result as a Map containing
      * the document Blob, title, output format, and template type. Does NOT save to record.
+     * @param templateId The DocGen_Template__c record ID
+     * @param recordId The source record ID to merge data from
+     * @return Map with keys: blob, title, outputFormat, templateType
      */
     public static Map<String, Object> processDocument(Id templateId, Id recordId) {
         return processDocument(templateId, recordId, null);
@@ -449,6 +475,10 @@ public with sharing class DocGenService {
      * Processes a template with optional pre-resolved images from the LWC.
      * The resolvedImages map contains originalUrl → base64DataUri entries
      * fetched by the browser (which has session access to Salesforce URLs).
+     * @param templateId The DocGen_Template__c record ID
+     * @param recordId The source record ID to merge data from
+     * @param resolvedImages Map of originalUrl to base64DataUri for LWC-resolved images
+     * @return Map with keys: blob, title, outputFormat, templateType
      */
     public static Map<String, Object> processDocument(Id templateId, Id recordId, Map<String, String> resolvedImages) {
         MergeResult mr = mergeTemplate(templateId, recordId, resolvedImages);
@@ -467,6 +497,9 @@ public with sharing class DocGenService {
      * No ZIP assembly on server — just the merged XML, updated rels/content types,
      * shell CV ID, and pending image CV IDs. The browser fetches the shell ZIP and
      * images by URL, then assembles the final DOCX client-side (zero heap for ZIP).
+     * @param templateId The DocGen_Template__c record ID
+     * @param recordId The source record ID to merge data from
+     * @return Map with keys: allXmlParts, imageBase64Map, imageCvIdMap, title, templateType
      */
     public static Map<String, Object> generateDocumentParts(Id templateId, Id recordId) {
         // Use PDF output format to skip image blob loading during merge.
@@ -533,15 +566,21 @@ public with sharing class DocGenService {
      * records linked to the template version. These committed CVs provide stable URLs
      * for Blob.toPdf() which cannot render data URI images (Flying Saucer limitation).
      * Each version gets its own set of images — no duplicates or confusion.
+     * @param templateId The DocGen_Template__c record ID
+     * @param versionId The DocGen_Template_Version__c record ID to link images to
      */
     public static void extractAndSaveTemplateImages(Id templateId, Id versionId) {
         String fileContent = DocGenTemplateManager.getTemplateFileContent(templateId);
-        if (fileContent == null) return;
+        if (fileContent == null) {
+            return;
+        }
 
         List<DocGen_Template__c> templates = [
             SELECT Type__c FROM DocGen_Template__c WHERE Id = :templateId WITH SYSTEM_MODE LIMIT 1
         ];
-        if (templates.isEmpty()) return;
+        if (templates.isEmpty()) {
+            return;
+        }
         String templateType = templates[0].Type__c;
 
         Blob templateBlob = EncodingUtil.base64Decode(fileContent);
@@ -640,10 +679,14 @@ public with sharing class DocGenService {
             Integer relCursor = 0;
             while (relCursor < relsXml.length()) {
                 Integer relStart = relsXml.indexOf('<Relationship ', relCursor);
-                if (relStart == -1) break;
+                if (relStart == -1) {
+                    break;
+                }
                 Integer relSelfClose = relsXml.indexOf('/>', relStart);
                 Integer relClose = relsXml.indexOf('>', relStart);
-                if (relClose == -1) break;
+                if (relClose == -1) {
+                    break;
+                }
                 Integer relEnd = (relSelfClose != -1 && relSelfClose < relClose) ? relSelfClose + 2 : relClose + 1;
 
                 String relTag = relsXml.substring(relStart, relEnd);
@@ -761,6 +804,9 @@ public with sharing class DocGenService {
      * Uses the same merge + image pipeline as the PDF generator (forced PDF mode,
      * pre-decomposed XML, buildPdfImageMap), then converts relative CV URLs
      * to base64 data URIs so guest users can view them without a Salesforce session.
+     * @param templateId The DocGen_Template__c record ID
+     * @param recordId The source record ID to merge data from
+     * @return Complete HTML string with embedded base64 data URI images
      */
     public static String renderPreviewHtml(Id templateId, Id recordId) {
         // Same merge path as PDF generation — forced PDF mode
@@ -787,6 +833,7 @@ public with sharing class DocGenService {
                     previewImages.put(relId, 'data:' + mime + ';base64,' + EncodingUtil.base64Encode(cv.VersionData));
                 } catch (Exception e) {
                     // Skip unresolvable images
+                    System.debug(LoggingLevel.ERROR, 'DocGenService: Unresolvable image skipped: ' + e.getMessage());
                 }
             } else if (url != null) {
                 previewImages.put(relId, url);
@@ -799,6 +846,9 @@ public with sharing class DocGenService {
     /**
      * Generates a PDF Blob and title without saving to record.
      * Used by DocGenController for download mode.
+     * @param templateId The DocGen_Template__c record ID
+     * @param recordId The source record ID to merge data from
+     * @return Map with keys: blob (PDF Blob), title (String)
      */
     public static Map<String, Object> generatePdfBlob(Id templateId, Id recordId) {
         // Force PDF output format so we get the heap-efficient path
@@ -821,6 +871,10 @@ public with sharing class DocGenService {
      * Merges a template with record data and returns HTML using a custom image map.
      * Used by the batch PDF renderer to generate HTML with ContentVersion URLs
      * instead of data URIs, allowing Flying Saucer to render images in PDFs.
+     * @param templateId The DocGen_Template__c record ID
+     * @param recordId The source record ID to merge data from
+     * @param imageMap Map of relId to image URL for PDF rendering
+     * @return Map with keys: html, title, outputFormat, templateType
      */
     public static Map<String, Object> processDocumentAsHtmlWithImageMap(Id templateId, Id recordId, Map<String, String> imageMap) {
         MergeResult mr = mergeTemplate(templateId, recordId);
@@ -851,7 +905,9 @@ public with sharing class DocGenService {
     /**
      * Processes a template and saves the result as a ContentVersion attached to the record.
      * For PDF output, uses the unified renderPdf() path with pre-committed image URLs.
-     * Returns ContentDocumentId.
+     * @param templateId The DocGen_Template__c record ID
+     * @param recordId The source record ID to merge data from
+     * @return ContentDocumentId of the saved file
      */
     public static Id generateDocument(Id templateId, Id recordId) {
         MergeResult mr = mergeTemplate(templateId, recordId);
@@ -870,6 +926,10 @@ public with sharing class DocGenService {
      * Generates a document using pre-cached record data, bypassing data retrieval SOQL.
      * Sets the static override so mergeTemplate() uses cached data instead of querying.
      * Used by DocGenBatch when bulk data cache is available.
+     * @param templateId The DocGen_Template__c record ID
+     * @param recordId The source record ID (used for file attachment)
+     * @param preloadedRecordData Pre-fetched record data map to use instead of querying
+     * @return ContentDocumentId of the saved file
      */
     public static Id generateDocumentFromData(Id templateId, Id recordId, Map<String, Object> preloadedRecordData) {
         preloadedRecordDataOverride = preloadedRecordData;
@@ -880,6 +940,10 @@ public with sharing class DocGenService {
      * Generates the HTML for a single record without calling Blob.toPdf() or saving a file.
      * Used by bulk batch to accumulate HTML for all records, then render one merged PDF at the end.
      * Accepts optional pre-loaded record data to skip per-record SOQL.
+     * @param templateId The DocGen_Template__c record ID
+     * @param recordId The source record ID to merge data from
+     * @param preloadedRecordData Optional pre-fetched record data map (null to query fresh)
+     * @return HTML string ready for Blob.toPdf() rendering
      */
     public static String generateHtmlForRecord(Id templateId, Id recordId, Map<String, Object> preloadedRecordData) {
         if (preloadedRecordData != null) {
@@ -911,7 +975,9 @@ public with sharing class DocGenService {
             contents.add(m.group(1));
         }
 
-        if (contents.isEmpty()) return xml;
+        if (contents.isEmpty()) {
+            return xml;
+        }
 
         // 2. Build flat text (concatenation of all <w:t> text) and segment offsets
         Integer totalLen = 0;
@@ -928,9 +994,13 @@ public with sharing class DocGenService {
 
         while (pos < flatText.length()) {
             Integer openBrace = flatText.indexOf('{', pos);
-            if (openBrace == -1) break;
+            if (openBrace == -1) {
+                break;
+            }
             Integer closeBrace = flatText.indexOf('}', openBrace);
-            if (closeBrace == -1) break;
+            if (closeBrace == -1) {
+                break;
+            }
 
             // Determine which segments contain the { and }
             Integer openSeg = -1;
@@ -965,7 +1035,9 @@ public with sharing class DocGenService {
             pos = closeBrace + 1;
         }
 
-        if (!modified) return xml;
+        if (!modified) {
+            return xml;
+        }
 
         // 4. Reconstruct XML by replacing text content (work backwards to maintain positions)
         String result = xml;
@@ -1022,7 +1094,9 @@ public with sharing class DocGenService {
                     // Smart Table Row Expansion
                     // Check if we are inside a TR and if the loop is fully contained in it
                     Integer trStart = xml.lastIndexOf('<w:tr ', cursor);
-                    if (trStart == -1) trStart = xml.lastIndexOf('<w:tr>', cursor);
+                    if (trStart == -1) {
+                        trStart = xml.lastIndexOf('<w:tr>', cursor);
+                    }
 
                     // Find matching TR End
                     Integer trEnd = -1;
@@ -1084,7 +1158,9 @@ public with sharing class DocGenService {
                          if (mapVal.containsKey('records') && mapVal.get('records') instanceof List<Object>) {
                             List<Object> records = (List<Object>) mapVal.get('records');
                             for (Object item : records) {
-                                if (item instanceof Map<String, Object>) sectionResult += processXml(innerXml, (Map<String, Object>) item);
+                                if (item instanceof Map<String, Object>) {
+                                    sectionResult += processXml(innerXml, (Map<String, Object>) item);
+                                }
                             }
                         } else {
                              sectionResult = processXml(innerXml, mapVal);
@@ -1213,14 +1289,22 @@ public with sharing class DocGenService {
         Integer cursor = startSearch;
         while (cursor < xml.length()) {
             Integer nextStart = xml.indexOf('{', cursor);
-            if (nextStart == -1) return -1;
+            if (nextStart == -1) {
+                return -1;
+            }
             Integer nextClose = xml.indexOf('}', nextStart);
-            if (nextClose == -1) return -1;
+            if (nextClose == -1) {
+                return -1;
+            }
             String content = xml.substring(nextStart + 1, nextClose).trim();
-            if (content.equals('#' + key)) depth++;
+            if (content.equals('#' + key)) {
+                depth++;
+            }
             else if (content.equals('/' + key)) {
                 depth--;
-                if (depth == 0) return nextStart;
+                if (depth == 0) {
+                    return nextStart;
+                }
             }
             cursor = nextClose + 1;
         }
@@ -1228,7 +1312,9 @@ public with sharing class DocGenService {
     }
     
     private static Object resolveValue(Map<String, Object> data, String path) {
-        if (data == null) return null;
+        if (data == null) {
+            return null;
+        }
         List<String> parts = path.split('\\.');
         Object current = data;
 
@@ -1267,7 +1353,9 @@ public with sharing class DocGenService {
             } else {
                 return null;
             }
-            if (current == null) return null;
+            if (current == null) {
+                return null;
+            }
         }
         return current;
     }
@@ -1290,7 +1378,9 @@ public with sharing class DocGenService {
      */
     private static List<String> parseSharedStrings(String xml) {
         List<String> strings = new List<String>();
-        if (String.isBlank(xml)) return strings;
+        if (String.isBlank(xml)) {
+            return strings;
+        }
 
         Integer cursor = 0;
         while (cursor < xml.length()) {
@@ -1298,10 +1388,14 @@ public with sharing class DocGenService {
             if (siStart == -1) {
                 siStart = xml.indexOf('<si ', cursor);
             }
-            if (siStart == -1) break;
+            if (siStart == -1) {
+                break;
+            }
 
             Integer siEnd = xml.indexOf('</si>', siStart);
-            if (siEnd == -1) break;
+            if (siEnd == -1) {
+                break;
+            }
 
             // Extract all <t> content within this <si>
             String siContent = xml.substring(siStart, siEnd);
@@ -1309,16 +1403,22 @@ public with sharing class DocGenService {
             Integer tCursor = 0;
             while (tCursor < siContent.length()) {
                 Integer tStart = siContent.indexOf('<t', tCursor);
-                if (tStart == -1) break;
+                if (tStart == -1) {
+                    break;
+                }
                 Integer tTagEnd = siContent.indexOf('>', tStart);
-                if (tTagEnd == -1) break;
+                if (tTagEnd == -1) {
+                    break;
+                }
                 // Skip self-closing
                 if (siContent.substring(tTagEnd - 1, tTagEnd) == '/') {
                     tCursor = tTagEnd + 1;
                     continue;
                 }
                 Integer tEnd = siContent.indexOf('</t>', tTagEnd);
-                if (tEnd == -1) break;
+                if (tEnd == -1) {
+                    break;
+                }
                 value += siContent.substring(tTagEnd + 1, tEnd);
                 tCursor = tEnd + 4;
             }
@@ -1336,7 +1436,9 @@ public with sharing class DocGenService {
      * After:  <c r="A1" t="inlineStr"><is><t>{Name}</t></is></c>
      */
     private static String inlineSharedStrings(String xml, List<String> sharedStrings) {
-        if (sharedStrings.isEmpty()) return xml;
+        if (sharedStrings.isEmpty()) {
+            return xml;
+        }
 
         String result = '';
         Integer cursor = 0;
@@ -1411,7 +1513,9 @@ public with sharing class DocGenService {
     };
 
     private static Boolean isNumericFormat(String fmt) {
-        if (fmt == null) return false;
+        if (fmt == null) {
+            return false;
+        }
         String lower = fmt.toLowerCase().trim();
         return NUMERIC_FORMATS.contains(lower) || lower.startsWith('#') || lower.startsWith('0');
     }
@@ -1474,7 +1578,9 @@ public with sharing class DocGenService {
 
     private static Boolean isAggregateTag(String tagContent) {
         Integer colonIdx = tagContent.indexOf(':');
-        if (colonIdx <= 0) return false;
+        if (colonIdx <= 0) {
+            return false;
+        }
         String fn = tagContent.substring(0, colonIdx).trim().toUpperCase();
         return AGGREGATE_FUNCTIONS.contains(fn);
     }
@@ -1529,11 +1635,15 @@ public with sharing class DocGenService {
             return countResult;
         }
 
-        if (fieldName == null) return null;
+        if (fieldName == null) {
+            return null;
+        }
 
         // Get child records and extract numeric values
         List<Object> records = getChildRecords(data, listName);
-        if (records == null || records.isEmpty()) return '0';
+        if (records == null || records.isEmpty()) {
+            return '0';
+        }
 
         List<Decimal> values = new List<Decimal>();
         for (Object item : records) {
@@ -1544,27 +1654,42 @@ public with sharing class DocGenService {
                         values.add(Decimal.valueOf(String.valueOf(fieldVal)));
                     } catch (Exception e) {
                         // Skip non-numeric values
+                        System.debug(LoggingLevel.ERROR, 'DocGenService: Non-numeric value in merge: ' + e.getMessage());
                     }
                 }
             }
         }
 
-        if (values.isEmpty()) return '0';
+        if (values.isEmpty()) {
+            return '0';
+        }
 
         Decimal result;
         if (fn == 'SUM') {
             result = 0;
-            for (Decimal v : values) result += v;
+            for (Decimal v : values) {
+                result += v;
+            }
         } else if (fn == 'AVG') {
             result = 0;
-            for (Decimal v : values) result += v;
+            for (Decimal v : values) {
+                result += v;
+            }
             result = result.divide(values.size(), 2, RoundingMode.HALF_UP);
         } else if (fn == 'MIN') {
             result = values[0];
-            for (Decimal v : values) if (v < result) result = v;
+            for (Decimal v : values) {
+                if (v < result) {
+                    result = v;
+                }
+            }
         } else if (fn == 'MAX') {
             result = values[0];
-            for (Decimal v : values) if (v > result) result = v;
+            for (Decimal v : values) {
+                if (v > result) {
+                    result = v;
+                }
+            }
         } else if (fn == 'COUNT') {
             String countResult = String.valueOf(values.size());
             if (numberFormat != null && isNumericFormat(numberFormat)) {
@@ -1681,7 +1806,9 @@ public with sharing class DocGenService {
 
             // Find end of tag
             Integer tagEnd = html.indexOf('>', nextTag);
-            if (tagEnd == -1) break;
+            if (tagEnd == -1) {
+                break;
+            }
             tagEnd++;
 
             String tag = html.substring(nextTag, tagEnd).toLowerCase();
@@ -1719,7 +1846,9 @@ public with sharing class DocGenService {
      * Builds a DOCX w:r (run) element with optional formatting.
      */
     private static String buildRun(String text, Boolean bold, Boolean italic, Boolean underline) {
-        if (String.isBlank(text)) return '';
+        if (String.isBlank(text)) {
+            return '';
+        }
         String rPr = '';
         if (bold || italic || underline) {
             rPr = '<w:rPr>';
@@ -1744,14 +1873,22 @@ public with sharing class DocGenService {
     private static String processRichTextImage(String imgTag) {
         // Extract src attribute
         Integer srcIdx = imgTag.indexOfIgnoreCase('src=');
-        if (srcIdx == -1) return null;
+        if (srcIdx == -1) {
+            return null;
+        }
         srcIdx += 4;
-        while (srcIdx < imgTag.length() && imgTag.substring(srcIdx, srcIdx + 1) == ' ') srcIdx++;
+        while (srcIdx < imgTag.length() && imgTag.substring(srcIdx, srcIdx + 1) == ' ') {
+            srcIdx++;
+        }
         String quoteChar = imgTag.substring(srcIdx, srcIdx + 1);
-        if (quoteChar != '"' && quoteChar != '\'') return null;
+        if (quoteChar != '"' && quoteChar != '\'') {
+            return null;
+        }
         srcIdx++;
         Integer srcEnd = imgTag.indexOf(quoteChar, srcIdx);
-        if (srcEnd == -1) return null;
+        if (srcEnd == -1) {
+            return null;
+        }
         String src = imgTag.substring(srcIdx, srcEnd).replace('&amp;', '&');
 
         // Extract optional width/height
@@ -1787,7 +1924,8 @@ public with sharing class DocGenService {
             // Blob.toPdf() resolves Salesforce URLs natively via the VF engine.
             if (src.containsIgnoreCase('.jpg') || src.containsIgnoreCase('.jpeg')) ext = 'jpeg';
         } catch (Exception e) {
-            System.debug(LoggingLevel.ERROR, 'DocGen: Rich text image processing error: ' + e.getMessage());
+            // Image source parsing failed (invalid data URI, malformed HTML) — fall through to URL handling
+            System.debug(LoggingLevel.ERROR, 'DocGenService: Image source parsing failed: ' + e.getMessage());
         }
 
         // Register image — store blob for DOCX and URL for PDF rendering.
@@ -1857,8 +1995,12 @@ public with sharing class DocGenService {
      */
     private static String extractHtmlAttrValue(String tag, Integer startAfterEquals) {
         Integer pos = startAfterEquals;
-        while (pos < tag.length() && tag.substring(pos, pos + 1) == ' ') pos++;
-        if (pos >= tag.length()) return null;
+        while (pos < tag.length() && tag.substring(pos, pos + 1) == ' ') {
+            pos++;
+        }
+        if (pos >= tag.length()) {
+            return null;
+        }
         String ch = tag.substring(pos, pos + 1);
         if (ch == '"' || ch == '\'') {
             Integer end2 = tag.indexOf(ch, pos + 1);
@@ -1866,7 +2008,9 @@ public with sharing class DocGenService {
         }
         // Unquoted value
         Integer end2 = pos;
-        while (end2 < tag.length() && tag.substring(end2, end2 + 1) != ' ' && tag.substring(end2, end2 + 1) != '>') end2++;
+        while (end2 < tag.length() && tag.substring(end2, end2 + 1) != ' ' && tag.substring(end2, end2 + 1) != '>') {
+            end2++;
+        }
         return tag.substring(pos, end2);
     }
 
@@ -1875,7 +2019,9 @@ public with sharing class DocGenService {
     }
 
     private static String buildImageXml(String fieldValue, Integer widthPx, Integer heightPx) {
-        if (String.isBlank(fieldValue)) return null;
+        if (String.isBlank(fieldValue)) {
+            return null;
+        }
 
         Blob imageBlob = null;
         String ext = 'png';
@@ -1931,7 +2077,7 @@ public with sharing class DocGenService {
             // 7. Generic HTTPS URL — can't fetch without session ID (AppExchange safe).
             // For {%ImageField} tags, users should use ContentVersion IDs or data URIs.
             else if (fieldValue.startsWith('https://')) {
-                System.debug(LoggingLevel.WARN, 'DocGen: External URL images require ContentVersion ID or data URI: ' + fieldValue.left(200));
+                // External URL images cannot be fetched without session ID — users should use ContentVersion IDs or data URIs
             }
 
             // If no blob but we have a URL, store it for PDF rendering
@@ -1957,7 +2103,7 @@ public with sharing class DocGenService {
                 }
 
                 if (String.isBlank(sourceUrl) || sourceUrl.startsWith('data:')) {
-                    System.debug(LoggingLevel.WARN, 'DocGen: Could not resolve image from: ' + fieldValue.left(200));
+                    // Could not resolve image source — no blob or usable URL available
                     return null;
                 }
             }
@@ -2021,7 +2167,7 @@ public with sharing class DocGenService {
                 '</w:drawing></w:r><w:r><w:t xml:space="preserve">';
 
         } catch (Exception e) {
-            System.debug(LoggingLevel.ERROR, 'DocGen: Image injection error: ' + e.getMessage());
+            // Image injection failed (invalid CV ID, corrupt base64, etc.) — skip this image
             return null;
         }
     }
@@ -2033,22 +2179,32 @@ public with sharing class DocGenService {
     private static Blob extractImageFromHtml(String html) {
         // Use string parsing instead of regex to avoid "Regex too complicated" on large base64 data
         Integer imgIdx = html.indexOfIgnoreCase('<img');
-        if (imgIdx == -1) return null;
+        if (imgIdx == -1) {
+            return null;
+        }
 
         Integer srcIdx = html.indexOfIgnoreCase('src=', imgIdx);
-        if (srcIdx == -1) return null;
+        if (srcIdx == -1) {
+            return null;
+        }
 
         srcIdx += 4; // skip 'src='
         // Skip optional whitespace
-        while (srcIdx < html.length() && html.substring(srcIdx, srcIdx + 1) == ' ') srcIdx++;
+        while (srcIdx < html.length() && html.substring(srcIdx, srcIdx + 1) == ' ') {
+            srcIdx++;
+        }
 
         // Determine quote character
         String quoteChar = html.substring(srcIdx, srcIdx + 1);
-        if (quoteChar != '"' && quoteChar != '\'') return null;
+        if (quoteChar != '"' && quoteChar != '\'') {
+            return null;
+        }
         srcIdx++; // skip opening quote
 
         Integer srcEnd = html.indexOf(quoteChar, srcIdx);
-        if (srcEnd == -1) return null;
+        if (srcEnd == -1) {
+            return null;
+        }
 
         String src = html.substring(srcIdx, srcEnd).replace('&amp;', '&');
 
@@ -2071,12 +2227,16 @@ public with sharing class DocGenService {
      * Fetches image blob from a Salesforce file reference (ContentDocument ID or ContentVersion ID).
      */
     private static Blob fetchSalesforceImage(String fileRef) {
-        if (String.isBlank(fileRef)) return null;
+        if (String.isBlank(fileRef)) {
+            return null;
+        }
         try {
             // Try as ContentVersion ID first
             if (fileRef.startsWith('068')) {
                 List<ContentVersion> cvs = [SELECT VersionData FROM ContentVersion WHERE Id = :fileRef WITH SYSTEM_MODE LIMIT 1];
-                if (!cvs.isEmpty()) return cvs[0].VersionData;
+                if (!cvs.isEmpty()) {
+                    return cvs[0].VersionData;
+                }
             }
             // Try as ContentDocument ID
             if (fileRef.startsWith('069')) {
@@ -2084,16 +2244,21 @@ public with sharing class DocGenService {
                 if (!docs.isEmpty() && docs[0].LatestPublishedVersionId != null) {
                     Id latestCvId = docs[0].LatestPublishedVersionId;
                     List<ContentVersion> cvs = [SELECT VersionData FROM ContentVersion WHERE Id = :latestCvId WITH SYSTEM_MODE LIMIT 1];
-                    if (!cvs.isEmpty()) return cvs[0].VersionData;
+                    if (!cvs.isEmpty()) {
+                        return cvs[0].VersionData;
+                    }
                 }
             }
             // Try as a generic ID that could be linked
             if (fileRef.length() >= 15) {
                 List<ContentVersion> cvs = [SELECT VersionData FROM ContentVersion WHERE Id = :fileRef WITH SYSTEM_MODE LIMIT 1];
-                if (!cvs.isEmpty()) return cvs[0].VersionData;
+                if (!cvs.isEmpty()) {
+                    return cvs[0].VersionData;
+                }
             }
         } catch (Exception e) {
-            System.debug(LoggingLevel.WARN, 'DocGen: Failed to fetch image for ref: ' + fileRef + ' - ' + e.getMessage());
+            // Image fetch failed (invalid ID, access denied) — return null to skip this image
+            System.debug(LoggingLevel.ERROR, 'DocGenService: Image content fetch failed: ' + e.getMessage());
         }
         return null;
     }
@@ -2138,15 +2303,21 @@ public with sharing class DocGenService {
     private static String extractXmlAttrValue(String tag, String attrName) {
         String search = attrName + '="';
         Integer start = tag.indexOf(search);
-        if (start == -1) return null;
+        if (start == -1) {
+            return null;
+        }
         start += search.length();
         Integer end2 = tag.indexOf('"', start);
-        if (end2 == -1) return null;
+        if (end2 == -1) {
+            return null;
+        }
         return tag.substring(start, end2);
     }
 
     private static String generateDocTitle(String format, Map<String, Object> data) {
-        if (String.isBlank(format)) return null;
+        if (String.isBlank(format)) {
+            return null;
+        }
         String result = format;
         Pattern p = Pattern.compile('\\{([^}]+)\\}');
         Matcher m = p.matcher(format);
@@ -2170,6 +2341,12 @@ public with sharing class DocGenService {
     // They do nothing — signatures have been removed from DocGen.
     // =========================================================================
 
+    /**
+     * Backward-compatibility stub — always throws. Signatures have been removed from DocGen.
+     * @param templateId Unused — stub only
+     * @param recordIdStr Unused — stub only
+     * @return Never returns — always throws DocGenException
+     */
     public static Map<String, Object> mergeTemplateForSignature(Id templateId, String recordIdStr) {
         throw new DocGenException('Signatures have been removed from DocGen. Please delete the old signature classes from your org.');
     }

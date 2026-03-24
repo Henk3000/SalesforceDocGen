@@ -1,8 +1,8 @@
 {
   "packageDirectories": [
     {
-      "versionName": "Apollo+ — Bulk Data Cache, Server-Side Merge, Notifications, Bug Fixes",
-      "versionNumber": "2.6.0.NEXT",
+      "versionName": "Beacon — QR Code Fix, Code Quality, Sample Templates",
+      "versionNumber": "2.7.0.NEXT",
       "path": "force-app",
       "default": true,
       "package": "Document Generation",

@@ -2,9 +2,12 @@
 
 Generate PDFs, Word docs, Excel spreadsheets, and PowerPoint presentations from any Salesforce record. Merge PDFs, add barcodes and QR codes, compute totals — 100% native, zero external dependencies, completely free.
 
-[![Version](https://img.shields.io/badge/version-2.6.0_Apollo+-blue.svg)](#install)
+[![Version](https://img.shields.io/badge/version-2.7.0_Beacon-blue.svg)](#install)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Salesforce-00A1E0.svg)](https://www.salesforce.com)
+[![Code Analyzer](https://img.shields.io/badge/Critical-0-brightgreen)](#code-quality)
+[![Code Analyzer](https://img.shields.io/badge/High-0-brightgreen)](#code-quality)
+
 ---
 
 ## Install
@@ -227,6 +230,56 @@ Decompress → Merge XML tags → Recompress
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for full version history.
+
+---
+
+## Code Quality
+
+Scanned with [Salesforce Code Analyzer](https://developer.salesforce.com/docs/platform/salesforce-code-analyzer/overview) v5.9.0 (engines: PMD, ESLint, RetireJS, CPD, Flow Scanner).
+
+### Security & Severity Scorecard
+
+| Severity | Count | Status |
+|----------|-------|--------|
+| Critical | 0 | Passed |
+| High | 0 | Passed |
+| Moderate | 413 | Style / complexity |
+| Low | 511 | Informational |
+| Info | 26 | Duplicate detection |
+
+### E2E Test Results
+
+```
+sf apex run --target-org <org> -f scripts/e2e-test.apex
+
+PASS: 19  FAIL: 0  ALL TESTS PASSED
+```
+
+| # | Test | Result |
+|---|------|--------|
+| T1 | Account Name field merge | PASS |
+| T2 | Owner.Name parent field lookup | PASS |
+| T3 | Contacts child loop (2 records) | PASS |
+| T4 | Opportunities child loop (1 record) | PASS |
+| T5 | Product2.Name on Line Items (parent field through child) | PASS |
+| T6 | Line Items count (2 records) | PASS |
+| T7 | Description ContentVersion ID (image field) | PASS |
+| T8 | Legacy V1 backward compatibility | PASS |
+| T9 | Image CV ID format validation | PASS |
+| T10 | Image CV file accessibility | PASS |
+| T11 | PDF document generation (Blob.toPdf) | PASS |
+| T12 | Generated file not empty | PASS |
+| T13 | Junction stitching (OCR -> Contact) | PASS |
+| T14 | COUNT:Contacts aggregate | PASS |
+| T15 | SUM:LineItems.TotalPrice aggregate | PASS |
+| T16 | SUM with :currency formatting | PASS |
+| T17 | AVG:UnitPrice aggregate | PASS |
+| T18 | MIN:Quantity aggregate | PASS |
+| T19 | MAX:Quantity aggregate | PASS |
+
+### QR Code Verification
+
+QR encoding verified module-by-module against [qrcode-generator](https://www.npmjs.com/package/qrcode-generator) reference library for versions 1 (21x21), 3 (29x29), and 6 (41x41). All modules match. See `scripts/qr-verify.js`.
 
 ---
 

@@ -58,7 +58,7 @@ if (!value) {
 let qrcodegen;
 try {
     qrcodegen = require('qrcode-generator');
-} catch (e) {
+} catch (err) {
     console.error('Missing dependency: qrcode-generator');
     console.error('Run: npm install qrcode-generator');
     process.exit(1);
