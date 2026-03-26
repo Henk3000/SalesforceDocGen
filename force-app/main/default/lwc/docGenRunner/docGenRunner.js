@@ -2,14 +2,20 @@ import { LightningElement, api, wire, track } from 'lwc';
 import { ShowToastEvent } from 'lightning/platformShowToastEvent';
 import getTemplatesForObject from '@salesforce/apex/DocGenController.getTemplatesForObject';
 import processAndReturnDocument from '@salesforce/apex/DocGenController.processAndReturnDocument';
+import generateDocumentParts from '@salesforce/apex/DocGenController.generateDocumentParts';
+import getContentVersionBase64 from '@salesforce/apex/DocGenController.getContentVersionBase64';
 import generatePdf from '@salesforce/apex/DocGenController.generatePdf';
+import saveGeneratedDocument from '@salesforce/apex/DocGenController.saveGeneratedDocument';
 import getChildRelationships from '@salesforce/apex/DocGenController.getChildRelationships';
 import getChildRecordPdfs from '@salesforce/apex/DocGenController.getChildRecordPdfs';
 import getRecordPdfs from '@salesforce/apex/DocGenController.getRecordPdfs';
 import { NavigationMixin } from 'lightning/navigation';
 import { downloadBase64 as downloadBase64Util } from 'c/docGenUtils';
+import { buildDocx } from './docGenZipWriter';
+import { mergePdfs } from './docGenPdfMerger';
 import OUT_FMT_FIELD from '@salesforce/schema/DocGen_Template__c.Output_Format__c';
 import TYPE_FIELD from '@salesforce/schema/DocGen_Template__c.Type__c';
+import IS_DEFAULT_FIELD from '@salesforce/schema/DocGen_Template__c.Is_Default__c';
 
 export default class DocGenRunner extends NavigationMixin(LightningElement) {
     @api recordId;
@@ -52,8 +58,7 @@ export default class DocGenRunner extends NavigationMixin(LightningElement) {
         return [
             { label: 'Create Document', value: 'generate', icon: '📄', class: this.appMode === 'generate' ? 'seg-btn active' : 'seg-btn' },
             { label: 'Document Packet', value: 'packet', icon: '📚', class: this.appMode === 'packet' ? 'seg-btn active' : 'seg-btn' },
-            { label: 'Combine PDFs', value: 'mergeOnly', icon: '🔗', class: this.appMode === 'mergeOnly' ? 'seg-btn active' : 'seg-btn' },
-            { label: 'Related Files', value: 'mergeChildren', icon: '📂', class: this.appMode === 'mergeChildren' ? 'seg-btn active' : 'seg-btn' }
+            { label: 'Combine PDFs', value: 'mergeOnly', icon: '🔗', class: this.appMode === 'mergeOnly' ? 'seg-btn active' : 'seg-btn' }
         ];
     }
 
@@ -110,7 +115,7 @@ export default class DocGenRunner extends NavigationMixin(LightningElement) {
         if (data) {
             this._templateData = data;
             // Auto-select the default template (query returns Is_Default__c DESC, so first match is the default)
-            const defaultTemplate = data.find(t => t.Is_Default__c);
+            const defaultTemplate = data.find(t => t[IS_DEFAULT_FIELD.fieldApiName]);
             this.templateOptions = data.map(t => ({
                 label: t.Name,
                 value: t.Id,
@@ -120,6 +125,8 @@ export default class DocGenRunner extends NavigationMixin(LightningElement) {
                 this.selectedTemplateId = defaultTemplate.Id;
             }
             this.error = undefined;
+            // Preload record PDFs for merge option
+            this.loadRecordPdfs();
         } else if (error) {
             this.error = 'Error loading templates: ' + error.body.message;
         }
@@ -133,7 +140,7 @@ export default class DocGenRunner extends NavigationMixin(LightningElement) {
     }
 
     get childRelComboboxOptions() {
-        return this.childRelationships.map(rel => ({ label: rel.relationshipName + ' (' + rel.childObjectLabel + ')', value: rel.relationshipName }));
+        return this.childRelationships.map(rel => ({ label: rel.label, value: rel.value }));
     }
 
     get pdfTemplateOptions() {
@@ -210,11 +217,11 @@ export default class DocGenRunner extends NavigationMixin(LightningElement) {
     async handleLoadChildPdfs() {
         this.isLoading = true;
         try {
-            const rel = this.childRelationships.find(r => r.relationshipName === this.selectedChildRel);
-            const data = await getChildRecordPdfs({ 
-                parentRecordId: this.recordId, 
-                childObject: rel.childObjectApi,
-                lookupField: rel.lookupFieldApi,
+            const rel = this.childRelationships.find(r => r.value === this.selectedChildRel);
+            const data = await getChildRecordPdfs({
+                parentRecordId: this.recordId,
+                childObject: rel.childObjectApiName,
+                lookupField: rel.lookupField,
                 filterClause: this.childFilterClause 
             });
             this.childRecordGroups = data;
@@ -249,60 +256,179 @@ export default class DocGenRunner extends NavigationMixin(LightningElement) {
 
     async generateDocument() {
         this.isLoading = true;
-        this.error = '';
+        this.error = null;
         try {
-            const t = this._templateData.find(tmpl => tmpl.Id === this.selectedTemplateId);
-            const isPDF = t[OUT_FMT_FIELD.fieldApiName] === 'PDF';
+            const selected = this._templateData.find(t => t.Id === this.selectedTemplateId);
+            const templateType = selected ? selected[TYPE_FIELD.fieldApiName] : 'Word';
+            const isPPT = templateType === 'PowerPoint';
+            const isExcel = templateType === 'Excel';
+            const isPDF = this.templateOutputFormat === 'PDF' && !isPPT && !isExcel;
             const saveToRecord = this.outputMode === 'save';
+            const shouldMerge = isPDF && this.mergeEnabled && this.selectedPdfCvIds.length > 0;
 
             if (isPDF) {
-                const result = await generatePdf({
-                    templateId: this.selectedTemplateId,
-                    recordId: this.recordId,
-                    saveToRecord: saveToRecord
-                });
-                
-                if (this.mergeEnabled && this.selectedPdfCvIds.length > 0) {
-                    // Logic for merging after generation would go here using client-side merger
-                    // For now, keep it simple as standard functionality
-                }
-
-                if (saveToRecord) {
-                    this.showToast('Success', 'Document saved to record.', 'success');
+                if (shouldMerge) {
+                    await this._generateMergedPdf(saveToRecord);
                 } else {
-                    this.downloadBase64(result.base64, (result.title || 'Document') + '.pdf', 'application/pdf');
+                    this.showToast('Info', 'Generating PDF...', 'info');
+                    const result = await generatePdf({
+                        templateId: this.selectedTemplateId,
+                        recordId: this.recordId,
+                        saveToRecord: saveToRecord
+                    });
+                    if (saveToRecord) {
+                        this.showToast('Success', 'PDF saved to record.', 'success');
+                    } else if (result.base64) {
+                        this.downloadBase64(result.base64, (result.title || 'Document') + '.pdf', 'application/pdf');
+                    }
                 }
+            } else if (!isPPT) {
+                // Word DOCX / Excel XLSX — client-side assembly
+                const ext = isExcel ? 'xlsx' : 'docx';
+                this.showToast('Info', 'Generating document...', 'info');
+                await this._generateOfficeClientSide(saveToRecord, ext, 'application/octet-stream');
             } else {
+                // PowerPoint — server-side
                 const result = await processAndReturnDocument({
                     templateId: this.selectedTemplateId,
                     recordId: this.recordId
                 });
-                this.downloadBase64(result.base64, (result.title || 'Document') + (t[TYPE_FIELD.fieldApiName] === 'PowerPoint' ? '.pptx' : '.docx'), 'application/octet-stream');
+                if (!result || !result.base64) { throw new Error('Document generation returned empty result.'); }
+                const docTitle = result.title || 'Document';
+                if (saveToRecord) {
+                    await saveGeneratedDocument({ recordId: this.recordId, fileName: docTitle, base64Data: result.base64, extension: 'pptx' });
+                    this.showToast('Success', 'PPTX saved to record.', 'success');
+                } else {
+                    this.downloadBase64(result.base64, docTitle + '.pptx', 'application/octet-stream');
+                }
             }
         } catch (e) {
-            this.error = e.body ? e.body.message : e.message;
+            this.error = 'Generation Error: ' + (e.body ? e.body.message : e.message || 'Unknown error');
         } finally {
             this.isLoading = false;
         }
     }
 
+    async _generateMergedPdf(saveToRecord) {
+        const totalPdfs = this.selectedPdfCvIds.length + 1;
+        this.showToast('Info', `Generating and merging ${totalPdfs} PDFs...`, 'info');
+        const result = await generatePdf({ templateId: this.selectedTemplateId, recordId: this.recordId, saveToRecord: false });
+        if (!result || !result.base64) { throw new Error('Template PDF generation returned empty result.'); }
+        const docTitle = result.title || 'Document';
+        const pdfBytesArray = [this._base64ToUint8Array(result.base64)];
+        for (const cvId of this.selectedPdfCvIds) {
+            const b64 = await getContentVersionBase64({ contentVersionId: cvId });
+            if (b64) { pdfBytesArray.push(this._base64ToUint8Array(b64)); }
+        }
+        const mergedBytes = mergePdfs(pdfBytesArray);
+        const mergedBase64 = this._uint8ArrayToBase64(mergedBytes);
+        if (saveToRecord) {
+            await saveGeneratedDocument({ recordId: this.recordId, fileName: docTitle, base64Data: mergedBase64, extension: 'pdf' });
+            this.showToast('Success', 'Merged PDF saved to record.', 'success');
+        } else {
+            this.downloadBase64(mergedBase64, docTitle + '.pdf', 'application/pdf');
+            this.showToast('Success', 'Merged PDF downloaded.', 'success');
+        }
+    }
+
     async generatePacket() {
         this.isLoading = true;
-        this.showToast('Note', 'Generating packet...', 'info');
-        // This would require multiple calls and client-side merge
-        this.isLoading = false;
+        this.error = null;
+        try {
+            const templateCount = this.packetTemplateIds.length;
+            const existingCount = this.packetIncludeExisting ? this.packetExistingPdfIds.length : 0;
+            this.showToast('Info', `Generating packet (${templateCount + existingCount} documents)...`, 'info');
+            const pdfBytesArray = [];
+            for (const templateId of this.packetTemplateIds) {
+                const result = await generatePdf({ templateId, recordId: this.recordId, saveToRecord: false });
+                if (result && result.base64) { pdfBytesArray.push(this._base64ToUint8Array(result.base64)); }
+            }
+            if (this.packetIncludeExisting && this.packetExistingPdfIds.length > 0) {
+                for (const cvId of this.packetExistingPdfIds) {
+                    const b64 = await getContentVersionBase64({ contentVersionId: cvId });
+                    if (b64) { pdfBytesArray.push(this._base64ToUint8Array(b64)); }
+                }
+            }
+            if (pdfBytesArray.length === 0) { throw new Error('No documents were generated.'); }
+            let finalBase64;
+            if (pdfBytesArray.length === 1) {
+                finalBase64 = this._uint8ArrayToBase64(pdfBytesArray[0]);
+            } else {
+                finalBase64 = this._uint8ArrayToBase64(mergePdfs(pdfBytesArray));
+            }
+            const saveToRecord = this.outputMode === 'save';
+            if (saveToRecord) {
+                await saveGeneratedDocument({ recordId: this.recordId, fileName: 'Document Packet', base64Data: finalBase64, extension: 'pdf' });
+                this.showToast('Success', 'Document packet saved to record.', 'success');
+            } else {
+                this.downloadBase64(finalBase64, 'Document Packet.pdf', 'application/pdf');
+                this.showToast('Success', 'Document packet downloaded.', 'success');
+            }
+        } catch (e) {
+            this.error = 'Packet Error: ' + (e.body ? e.body.message : e.message || 'Unknown error');
+        } finally {
+            this.isLoading = false;
+        }
     }
 
     async mergeOnlyDocument() {
         this.isLoading = true;
-        this.showToast('Note', 'Merging files...', 'info');
-        this.isLoading = false;
+        this.error = null;
+        try {
+            const count = this.mergeOnlyCvIds.length;
+            this.showToast('Info', `Merging ${count} PDFs...`, 'info');
+            const pdfBytesArray = [];
+            for (const cvId of this.mergeOnlyCvIds) {
+                const b64 = await getContentVersionBase64({ contentVersionId: cvId });
+                if (b64) { pdfBytesArray.push(this._base64ToUint8Array(b64)); }
+            }
+            if (pdfBytesArray.length < 2) { throw new Error('Need at least 2 PDFs to merge.'); }
+            const mergedBytes = mergePdfs(pdfBytesArray);
+            const mergedBase64 = this._uint8ArrayToBase64(mergedBytes);
+            const saveToRecord = this.outputMode === 'save';
+            if (saveToRecord) {
+                await saveGeneratedDocument({ recordId: this.recordId, fileName: 'Merged Document', base64Data: mergedBase64, extension: 'pdf' });
+                this.showToast('Success', 'Merged PDF saved to record.', 'success');
+            } else {
+                this.downloadBase64(mergedBase64, 'Merged Document.pdf', 'application/pdf');
+                this.showToast('Success', 'Merged PDF downloaded.', 'success');
+            }
+        } catch (e) {
+            this.error = 'Merge Error: ' + (e.body ? e.body.message : e.message || 'Unknown error');
+        } finally {
+            this.isLoading = false;
+        }
     }
 
     async mergeChildrenDocument() {
         this.isLoading = true;
-        this.showToast('Note', 'Combining files...', 'info');
-        this.isLoading = false;
+        this.error = null;
+        try {
+            const count = this.selectedChildPdfCvIds.length;
+            this.showToast('Info', `Merging ${count} PDFs from child records...`, 'info');
+            const pdfBytesArray = [];
+            for (const cvId of this.selectedChildPdfCvIds) {
+                const b64 = await getContentVersionBase64({ contentVersionId: cvId });
+                if (b64) { pdfBytesArray.push(this._base64ToUint8Array(b64)); }
+            }
+            if (pdfBytesArray.length < 1) { throw new Error('No PDFs could be loaded.'); }
+            let finalBytes;
+            if (pdfBytesArray.length === 1) { finalBytes = pdfBytesArray[0]; }
+            else { finalBytes = mergePdfs(pdfBytesArray); }
+            const finalBase64 = this._uint8ArrayToBase64(finalBytes);
+            const saveToRecord = this.outputMode === 'save';
+            if (saveToRecord) {
+                await saveGeneratedDocument({ recordId: this.recordId, fileName: 'Merged Child PDFs', base64Data: finalBase64, extension: 'pdf' });
+                this.showToast('Success', 'Merged PDF saved to record.', 'success');
+            } else {
+                this.downloadBase64(finalBase64, 'Merged Child PDFs.pdf', 'application/pdf');
+                this.showToast('Success', 'Merged PDF downloaded.', 'success');
+            }
+        } catch (e) {
+            this.error = 'Merge Error: ' + (e.body ? e.body.message : e.message || 'Unknown error');
+        } finally {
+            this.isLoading = false;
+        }
     }
 
     // --- Helpers ---
@@ -314,6 +440,59 @@ export default class DocGenRunner extends NavigationMixin(LightningElement) {
         this.mergeOnlyCvIds = [];
         this.selectedChildPdfCvIds = [];
         this.childPdfsLoaded = false;
+    }
+
+    /**
+     * Client-side Office document assembly (DOCX or XLSX).
+     * Server merges XML, client fetches images, assembles ZIP.
+     * Note: Rich text images from rtaImage servlet URLs render in PDF only.
+     * For DOCX images, use {%FieldName} tags with ContentVersion IDs.
+     */
+    async _generateOfficeClientSide(saveToRecord, extension, mimeType) {
+        const parts = await generateDocumentParts({
+            templateId: this.selectedTemplateId,
+            recordId: this.recordId
+        });
+        if (!parts || !parts.allXmlParts) { throw new Error('Document generation returned empty result.'); }
+        const docTitle = parts.title || 'Document';
+
+        const allImages = { ...(parts.imageBase64Map || {}) };
+        if (parts.imageCvIdMap) {
+            const uniqueCvIds = new Map();
+            for (const [mediaPath, cvId] of Object.entries(parts.imageCvIdMap)) {
+                if (!uniqueCvIds.has(cvId)) { uniqueCvIds.set(cvId, []); }
+                uniqueCvIds.get(cvId).push(mediaPath);
+            }
+            for (const [cvId, mediaPaths] of uniqueCvIds) {
+                try {
+                    const b64 = await getContentVersionBase64({ contentVersionId: cvId });
+                    if (b64) { for (const mp of mediaPaths) { allImages[mp] = b64; } }
+                } catch (imgErr) { console.warn('DocGen: Failed to fetch image CV ' + cvId, imgErr); }
+            }
+        }
+
+        const fileBytes = buildDocx(parts.allXmlParts, allImages);
+        const fileBase64 = this._uint8ArrayToBase64(fileBytes);
+        if (saveToRecord) {
+            await saveGeneratedDocument({ recordId: this.recordId, fileName: docTitle, base64Data: fileBase64, extension });
+            this.showToast('Success', extension.toUpperCase() + ' saved to record.', 'success');
+        } else {
+            this.downloadBase64(fileBase64, docTitle + '.' + extension, mimeType);
+            this.showToast('Success', extension.toUpperCase() + ' downloaded.', 'success');
+        }
+    }
+
+    _base64ToUint8Array(base64) {
+        const binaryStr = atob(base64);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) { bytes[i] = binaryStr.charCodeAt(i); }
+        return bytes;
+    }
+
+    _uint8ArrayToBase64(bytes) {
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) { binary += String.fromCharCode(bytes[i]); }
+        return btoa(binary);
     }
 
     downloadBase64(base64Data, fileName, mimeType) {

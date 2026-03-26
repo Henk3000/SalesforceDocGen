@@ -543,6 +543,7 @@ public with sharing class DocGenService {
         // Dynamic images: return mediaPath → CV ID mapping (not base64)
         // Client calls getContentVersionBase64() for each unique CV in separate transactions
         Map<String, String> imageCvIdMap = new Map<String, String>();
+        Map<String, String> imageUrlMap = new Map<String, String>();
         for (Map<String, Object> img : pendingImages) {
             String fileName = (String) img.get('fileName');
             String mediaPath = 'word/media/' + fileName;
@@ -550,6 +551,9 @@ public with sharing class DocGenService {
                 String url = (String) img.get('url');
                 if (url.contains('/version/download/')) {
                     imageCvIdMap.put(mediaPath, url.substringAfterLast('/'));
+                } else if (url.contains('/servlet/') || url.contains('/sfc/')) {
+                    // Salesforce servlet URLs (rtaImage, etc.) — pass to client for fetching
+                    imageUrlMap.put(mediaPath, url);
                 }
             }
         }
@@ -558,6 +562,7 @@ public with sharing class DocGenService {
             'allXmlParts' => allXmlParts,
             'imageBase64Map' => imageBase64Map,
             'imageCvIdMap' => imageCvIdMap,
+            'imageUrlMap' => imageUrlMap,
             'title' => mr.docTitle,
             'templateType' => mr.templateType
         };
@@ -1984,7 +1989,8 @@ public with sharing class DocGenService {
             }
             pendingImages.add(imgData);
         } else if (String.isNotBlank(src) && !src.startsWith('data:')) {
-            // URL-only: no blob available, store URL for PDF rendering
+            // URL-only: store the URL. For PDF, Blob.toPdf() resolves Salesforce URLs natively.
+            // For DOCX, the client-side assembly path will fetch the blob via browser session.
             pendingImages.add(new Map<String, Object>{
                 'relId' => relId,
                 'fileName' => fileName,

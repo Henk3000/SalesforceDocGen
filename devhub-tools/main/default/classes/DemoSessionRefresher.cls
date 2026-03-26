@@ -30,7 +30,7 @@ public with sharing class DemoSessionRefresher implements Schedulable {
         req.setEndpoint(config.Instance_Url__c + '/services/oauth2/token');
         req.setMethod('POST');
         req.setHeader('Content-Type', 'application/x-www-form-urlencoded');
-        req.setBody('grant_type=password&client_id=' + EncodingUtil.urlEncode(config.Client_Id__c.trim(), 'UTF-8') + '&client_secret=' + EncodingUtil.urlEncode(config.Client_Secret__c.trim(), 'UTF-8') + '&username=docgen-demo-user%40portwoodglobal.demo&password=DocGenDemo2026!');
+        req.setBody('grant_type=client_credentials&client_id=' + EncodingUtil.urlEncode(config.Client_Id__c.trim(), 'UTF-8') + '&client_secret=' + EncodingUtil.urlEncode(config.Client_Secret__c.trim(), 'UTF-8'));
 
         try {
             Http http = new Http();

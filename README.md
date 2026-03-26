@@ -2,7 +2,7 @@
 
 Generate PDFs, Word docs, Excel spreadsheets, and PowerPoint presentations from any Salesforce record. Merge PDFs, add barcodes and QR codes, compute totals — 100% native, zero external dependencies, completely free.
 
-[![Version](https://img.shields.io/badge/version-1.0.8-blue.svg)](#install)
+[![Version](https://img.shields.io/badge/version-1.0.9-blue.svg)](#install)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Salesforce-00A1E0.svg)](https://www.salesforce.com)
 [![Namespace](https://img.shields.io/badge/namespace-portwoodglobal-purple.svg)](#install)
@@ -113,6 +113,19 @@ QR codes support up to **255 characters** — enough for a full Salesforce text 
 | `{%Photo__c}` | Insert image at default size (4" x 3") |
 
 Store a ContentVersion ID (starts with `068`) in a text field. Works in Word templates — PDF and DOCX output.
+
+### Rich Text Fields
+
+Rich text fields (`{Description}`, `{Notes__c}`) render with full formatting (bold, italic, lists) in both PDF and DOCX output.
+
+**Images in rich text fields:**
+
+| Output | Rich Text Images | Notes |
+|--------|-----------------|-------|
+| **PDF** | :white_check_mark: Works | `Blob.toPdf()` resolves Salesforce image URLs natively |
+| **DOCX** | :x: Not supported | Salesforce `rtaImage` servlet URLs are inaccessible server-side (CORS + redirect restrictions). Use `{%FieldName}` image tags instead |
+
+**Recommendation:** For documents that need images in DOCX format, upload the image as a Salesforce File, store the ContentVersion ID in a text field, and use `{%FieldName}` image tags. This works in both PDF and DOCX.
 
 ### Page Breaks in Loops
 
