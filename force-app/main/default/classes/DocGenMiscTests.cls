@@ -553,16 +553,16 @@ private class DocGenMiscTests {
         DocGen_Template__c tpl = [SELECT Id FROM DocGen_Template__c LIMIT 1];
         Account acc = [SELECT Id FROM Account LIMIT 1];
 
-		Map<String, Object> result;
+        Map<String, Object> result;
         Test.startTest();
-		try {
+        try {
             result = DocGenService.processDocument(tpl.Id, acc.Id);
         } catch (DocGenException e) {
             System.assert(e.getMessage().contains('Malformed loop tag'), 'Exception message should contain "Malformed loop tag"');
         }
         Test.stopTest();
 
-        System.assertEquals(null, result, 'result should be null for unmatched section test');
+        System.assertEquals(null, result, 'Result should be null for unmatched section test');
     }
 
     @IsTest
@@ -1582,7 +1582,7 @@ private class DocGenMiscTests {
         DocGen_Template__c tpl = [SELECT Id FROM DocGen_Template__c LIMIT 1];
         Account acc = [SELECT Id FROM Account LIMIT 1];
 
-		Map<String, Object> result;
+        Map<String, Object> result;
         Test.startTest();
         try {
             result = DocGenService.processDocument(tpl.Id, acc.Id);
@@ -1591,7 +1591,7 @@ private class DocGenMiscTests {
         }
         Test.stopTest();
 
-        System.assertEquals(null, result, 'result should be null for unclosed brace test');
+        System.assertEquals(null, result, 'Result should be null for unclosed brace test');
     }
 
     @IsTest
