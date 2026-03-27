@@ -2,7 +2,7 @@
 
 Generate PDFs, Word docs, Excel spreadsheets, and PowerPoint presentations from any Salesforce record. Merge PDFs, add barcodes and QR codes, compute totals — 100% native, zero external dependencies, completely free.
 
-[![Version](https://img.shields.io/badge/version-1.1.3-blue.svg)](#install)
+[![Version](https://img.shields.io/badge/version-1.1.4-blue.svg)](#install)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Salesforce-00A1E0.svg)](https://www.salesforce.com)
 [![Namespace](https://img.shields.io/badge/namespace-portwoodglobal-purple.svg)](#install)
@@ -17,9 +17,9 @@ Generate PDFs, Word docs, Excel spreadsheets, and PowerPoint presentations from 
 |----------|-------|--------|
 | Critical | 0 | :white_check_mark: |
 | High | 0 | :white_check_mark: |
-| Moderate | 344 | Style/complexity only |
-| Low | 617 | ApexDoc, SLDS suggestions |
-| Info | 60 | Whitespace, copy-paste |
+| Moderate | 380 | Style/complexity only |
+| Low | 652 | ApexDoc, SLDS suggestions |
+| Info | 56 | Whitespace, copy-paste |
 
 Scanned with `sf code-analyzer run --rule-selector "recommended"` — the rule set used by Salesforce Security Review. Zero security violations.
 
@@ -30,10 +30,10 @@ Scanned with `sf code-analyzer run --rule-selector "recommended"` — the rule s
 **New install:**
 
 ```bash
-sf package install --package 04tal000006PClhAAG --wait 10 --target-org <your-org>
+sf package install --package 04tal000006PDOPAA4 --wait 10 --target-org <your-org>
 ```
 
-[Install in Production](https://login.salesforce.com/packaging/installPackage.apexp?p0=04tal000006PClhAAG) | [Install in Sandbox](https://test.salesforce.com/packaging/installPackage.apexp?p0=04tal000006PClhAAG)
+[Install in Production](https://login.salesforce.com/packaging/installPackage.apexp?p0=04tal000006PDOPAA4) | [Install in Sandbox](https://test.salesforce.com/packaging/installPackage.apexp?p0=04tal000006PDOPAA4)
 
 **Then:** Assign **DocGen Admin** permission set | Enable **Blob.toPdf() Release Update** | Open the **DocGen** app
 

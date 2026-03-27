@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.4 — "Bulk Runner UX, Community Hub & Batch Heap Analysis" (Portwood DocGen)
+
+- **Bulk Runner Output Mode** — Replaced confusing checkbox toggles with a single dropdown: "Individual Files" (one PDF per record, unlimited scale), "Print-Ready Packet" (single merged PDF), or "Combined + Individual" (both). Clear labels, clear behavior.
+- **Batch Heap Analysis** — Pre-generation analysis now shows per-batch heap estimates alongside merge heap. Uses measured heap delta (not just HTML size) to capture query objects, template parsing, and image metadata overhead. Safer batch size recommendations.
+- **Join Community Link** — Command Hub sidebar now includes a "Join Community" link to the DocGen Community Hub at portwoodglobalsolutions.com/DocGenCommunity. Passes the org ID for automatic account linking during registration.
+- **507/507 Apex tests**, 83% coverage, 0 Critical/High. E2E 22/22.
+
 ## v1.1.3 — "Clickable Hyperlinks in Rich Text PDFs" (Portwood DocGen)
 
 - **Clickable Hyperlinks in PDF** — Rich text `<a href="...">` tags now render as real clickable links in PDF output. Previously, hyperlinks from rich text fields were rendered as styled text (blue + underline) but were not clickable. Now they generate proper `<a>` tags in the HTML passed to `Blob.toPdf()`.
