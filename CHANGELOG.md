@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.6 — "Template Import/Export & Community Repo Migration" (Portwood DocGen)
+
+- **Template Import/Export** — Export any template as a portable `.docgen.json` file containing all metadata, query config, saved queries, and the template file (DOCX/XLSX/PPTX). Import the JSON into any org to recreate the template with a single click. Pre-decomposed parts and images are auto-regenerated on import. Export via row action menu; Import via toolbar button.
+- **Community Repo Migration** — DocGen's official home is now [Portwood-Global-Solutions/Portwood-DocGen](https://github.com/Portwood-Global-Solutions/Portwood-DocGen). GitHub Discussions enabled, issue templates upgraded (bug report, feature request, question), PR template, CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md, and custom labels added.
+- **Landing Page Links Updated** — All GitHub and install links on portwoodglobalsolutions.com now point to the new org repo and use CMDT-backed install URLs.
+- **507/507 Apex tests**, 77% coverage, 0 Critical/High. E2E 24/24.
+
 ## v1.1.5 — "Flow Action Visibility, Null Parent Lookup Fix & Landing Page CMDT" (Portwood DocGen)
 
 - **Flow Actions Visible in Subscriber Orgs** — `DocGenFlowAction` and `DocGenBulkFlowAction` changed from `public` to `global`. In namespaced packages, `@InvocableMethod` and `@InvocableVariable` members must be `global` to appear in the subscriber org's Flow Builder. Fixes #49.
